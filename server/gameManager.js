@@ -61,31 +61,25 @@ class GameState {
   }
 }
 
-function updateStreak(userId, won) {
+async function updateStreak(userId, won) {
   try {
-    const user = dbGet('SELECT current_streak, best_streak FROM users WHERE id = ?', [userId]);
+    const user = await dbGet('SELECT current_streak, best_streak FROM users WHERE id = ?', [userId]);
     if (!user) return;
-    let currentStreak = user.current_streak || 0;
-    let bestStreak    = user.best_streak    || 0;
-    if (won) {
-      currentStreak++;
-      if (currentStreak > bestStreak) bestStreak = currentStreak;
-    } else {
-      currentStreak = 0;
-    }
-    dbRun('UPDATE users SET current_streak=?, best_streak=? WHERE id=?', [currentStreak, bestStreak, userId]);
-  } catch (err) {
-    console.error('Streak update error:', err);
-  }
+    let cur  = user.current_streak || 0;
+    let best = user.best_streak    || 0;
+    if (won) { cur++; if (cur > best) best = cur; }
+    else cur = 0;
+    await dbRun('UPDATE users SET current_streak=?, best_streak=? WHERE id=?', [cur, best, userId]);
+  } catch (err) { console.error('Streak error:', err); }
 }
 
 function setupSocket(io) {
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     const token = socket.handshake.auth.token;
     if (!token) return next(new Error('Authentication required'));
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
-      const user = dbGet('SELECT id, username, elo, wins, losses, draws, games_played, current_streak, best_streak, country FROM users WHERE id = ?', [decoded.id]);
+      const user = await dbGet('SELECT id, username, elo, wins, losses, draws, games_played, current_streak, best_streak, country FROM users WHERE id = ?', [decoded.id]);
       if (!user) return next(new Error('User not found'));
       socket.userId   = user.id;
       socket.userInfo = user;
@@ -256,7 +250,7 @@ function tryMatch(io) {
   }
 }
 
-function createGame(io, p1, p2) {
+async function createGame(io, p1, p2) {
   const s1 = userSockets.get(p1.userId);
   const s2 = userSockets.get(p2.userId);
   if (!s1 || !s2) { if (s1) matchQueue.unshift(p1); if (s2) matchQueue.unshift(p2); return; }
@@ -276,9 +270,8 @@ function createGame(io, p1, p2) {
   );
   activeGames.set(gameId, game);
 
-  dbRun('INSERT INTO games (id, player_red_id, player_black_id, red_elo_before, black_elo_before) VALUES (?, ?, ?, ?, ?)',
+  await dbRun('INSERT INTO games (id, player_red_id, player_black_id, red_elo_before, black_elo_before) VALUES (?, ?, ?, ?, ?)',
     [gameId, redInfo.id, blackInfo.id, redInfo.elo, blackInfo.elo]);
-  saveNow();
 
   game.timerInterval = setInterval(() => {
     if (game.status !== 'active') { clearInterval(game.timerInterval); return; }
@@ -295,7 +288,7 @@ function createGame(io, p1, p2) {
   console.log(`Game: ${redInfo.username} vs ${blackInfo.username} [${tc.name}]`);
 }
 
-function finishGame(io, game, result) {
+async function finishGame(io, game, result) {
   if (game.status === 'finished') return;
   game.status = 'finished';
   game.result = result;
@@ -305,70 +298,61 @@ function finishGame(io, game, result) {
 
   console.log(`Finishing game ${game.id} — result: ${result}`);
 
-  let redUser, blackUser;
-  try {
-    redUser   = dbGet('SELECT * FROM users WHERE id = ?', [game.redPlayer.id]);
-    blackUser = dbGet('SELECT * FROM users WHERE id = ?', [game.blackPlayer.id]);
-  } catch (err) { console.error('Could not read users:', err); }
-
-  const redEloBefore   = redUser?.elo   ?? game.redPlayer.elo;
-  const blackEloBefore = blackUser?.elo ?? game.blackPlayer.elo;
-  let redEloAfter   = redEloBefore;
-  let blackEloAfter = blackEloBefore;
+  let redEloBefore = game.redPlayer.elo, blackEloBefore = game.blackPlayer.elo;
+  let redEloAfter  = redEloBefore,       blackEloAfter  = blackEloBefore;
 
   try {
+    const redUser   = await dbGet('SELECT * FROM users WHERE id = ?', [game.redPlayer.id]);
+    const blackUser = await dbGet('SELECT * FROM users WHERE id = ?', [game.blackPlayer.id]);
+    if (!redUser || !blackUser) throw new Error('Users not found');
+
+    redEloBefore   = redUser.elo;
+    blackEloBefore = blackUser.elo;
+    redEloAfter    = redEloBefore;
+    blackEloAfter  = blackEloBefore;
+
     if (result === 'red_win') {
       const r = calculateNewRatings(redEloBefore, blackEloBefore, redUser.games_played, blackUser.games_played, false);
       redEloAfter = r.newWinnerElo; blackEloAfter = r.newLoserElo;
-      dbRun('UPDATE users SET elo=?, wins=wins+1, games_played=games_played+1 WHERE id=?',     [redEloAfter,   redUser.id]);
-      dbRun('UPDATE users SET elo=?, losses=losses+1, games_played=games_played+1 WHERE id=?', [blackEloAfter, blackUser.id]);
-      updateStreak(redUser.id,   true);
-      updateStreak(blackUser.id, false);
-
+      await dbRun('UPDATE users SET elo=?, wins=wins+1, games_played=games_played+1 WHERE id=?',     [redEloAfter,   redUser.id]);
+      await dbRun('UPDATE users SET elo=?, losses=losses+1, games_played=games_played+1 WHERE id=?', [blackEloAfter, blackUser.id]);
+      await updateStreak(redUser.id, true);
+      await updateStreak(blackUser.id, false);
     } else if (result === 'black_win') {
       const r = calculateNewRatings(blackEloBefore, redEloBefore, blackUser.games_played, redUser.games_played, false);
       blackEloAfter = r.newWinnerElo; redEloAfter = r.newLoserElo;
-      dbRun('UPDATE users SET elo=?, wins=wins+1, games_played=games_played+1 WHERE id=?',     [blackEloAfter, blackUser.id]);
-      dbRun('UPDATE users SET elo=?, losses=losses+1, games_played=games_played+1 WHERE id=?', [redEloAfter,   redUser.id]);
-      updateStreak(blackUser.id, true);
-      updateStreak(redUser.id,   false);
-
+      await dbRun('UPDATE users SET elo=?, wins=wins+1, games_played=games_played+1 WHERE id=?',     [blackEloAfter, blackUser.id]);
+      await dbRun('UPDATE users SET elo=?, losses=losses+1, games_played=games_played+1 WHERE id=?', [redEloAfter,   redUser.id]);
+      await updateStreak(blackUser.id, true);
+      await updateStreak(redUser.id,   false);
     } else if (result === 'draw') {
       const r = calculateNewRatings(redEloBefore, blackEloBefore, redUser.games_played, blackUser.games_played, true);
       redEloAfter = r.newWinnerElo; blackEloAfter = r.newLoserElo;
-      dbRun('UPDATE users SET elo=?, draws=draws+1, games_played=games_played+1 WHERE id=?', [redEloAfter,   redUser.id]);
-      dbRun('UPDATE users SET elo=?, draws=draws+1, games_played=games_played+1 WHERE id=?', [blackEloAfter, blackUser.id]);
-      // Draws reset streak
-      updateStreak(redUser.id,   false);
-      updateStreak(blackUser.id, false);
-
+      await dbRun('UPDATE users SET elo=?, draws=draws+1, games_played=games_played+1 WHERE id=?', [redEloAfter,   redUser.id]);
+      await dbRun('UPDATE users SET elo=?, draws=draws+1, games_played=games_played+1 WHERE id=?', [blackEloAfter, blackUser.id]);
+      await updateStreak(redUser.id,   false);
+      await updateStreak(blackUser.id, false);
     } else {
-      dbRun('UPDATE users SET games_played=games_played+1 WHERE id=?', [redUser.id]);
-      dbRun('UPDATE users SET games_played=games_played+1 WHERE id=?', [blackUser.id]);
+      await dbRun('UPDATE users SET games_played=games_played+1 WHERE id=?', [redUser.id]);
+      await dbRun('UPDATE users SET games_played=games_played+1 WHERE id=?', [blackUser.id]);
     }
-    console.log(`ELO: red ${redEloBefore}→${redEloAfter} | black ${blackEloBefore}→${blackEloAfter}`);
-  } catch (err) { console.error('ELO update error:', err); }
 
-  let movesJson = null;
-  try {
-    const payload = { moves: game.moves, boardHistory: game.boardHistory };
-    movesJson = JSON.stringify(payload);
-    if (movesJson.length > 2000000) {
-      console.warn('moves_json too large, dropping boardHistory');
-      movesJson = JSON.stringify({ moves: game.moves, boardHistory: [] });
-    }
-  } catch (err) { console.error('Serialization error:', err); movesJson = null; }
+    let movesJson = null;
+    try {
+      const payload = { moves: game.moves, boardHistory: game.boardHistory };
+      movesJson = JSON.stringify(payload);
+      if (movesJson.length > 2000000) movesJson = JSON.stringify({ moves: game.moves, boardHistory: [] });
+    } catch (e) { console.error('Serialization error:', e); }
 
-  try {
     const winnerId = result === 'red_win' ? game.redPlayer.id : result === 'black_win' ? game.blackPlayer.id : null;
-    dbRun(
+    await dbRun(
       `UPDATE games SET winner_id=?, result=?, red_elo_after=?, black_elo_after=?,
-       moves_count=?, moves_json=?, completed_at=datetime('now') WHERE id=?`,
+       moves_count=?, moves_json=?, completed_at=NOW() WHERE id=?`,
       [winnerId, result, redEloAfter, blackEloAfter, game.moves.length, movesJson, game.id]
     );
-    saveNow();
-    console.log(`Game saved: ${game.id}`);
-  } catch (err) { console.error('Game record update error:', err); }
+
+    console.log(`ELO: red ${redEloBefore}→${redEloAfter} | black ${blackEloBefore}→${blackEloAfter}`);
+  } catch (err) { console.error('finishGame error:', err); }
 
   const resultData = {
     result,
