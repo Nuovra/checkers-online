@@ -6,6 +6,7 @@ const { prepare, dbGet, dbAll, dbRun, saveNow } = require('./database');
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'checkers-secret-change-in-production';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2026';
 
 function authMiddleware(req, res, next) {
   const header = req.headers.authorization;
@@ -18,6 +19,12 @@ function authMiddleware(req, res, next) {
   } catch {
     return res.status(401).json({ error: 'Invalid token' });
   }
+}
+
+function adminMiddleware(req, res, next) {
+  const password = req.headers['x-admin-password'];
+  if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Unauthorized' });
+  next();
 }
 
 router.post('/register', async (req, res) => {
@@ -82,7 +89,6 @@ router.post('/set-country', authMiddleware, (req, res) => {
     saveNow();
     res.json({ success: true, country: val });
   } catch (err) {
-    console.error('Set country error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -94,7 +100,6 @@ router.get('/profile/:username', (req, res) => {
       [req.params.username]
     );
     if (!user) return res.status(404).json({ error: 'User not found' });
-
     const rawGames = dbAll(
       `SELECT id, player_red_id, player_black_id, winner_id, result,
         red_elo_before, black_elo_before, red_elo_after, black_elo_after,
@@ -105,22 +110,13 @@ router.get('/profile/:username', (req, res) => {
        ORDER BY completed_at DESC LIMIT 20`,
       [user.id, user.id]
     );
-
     const games = rawGames.map(g => {
       const ru = dbGet('SELECT username, country FROM users WHERE id = ?', [g.player_red_id]);
       const bu = dbGet('SELECT username, country FROM users WHERE id = ?', [g.player_black_id]);
-      return {
-        ...g,
-        red_username:   ru?.username || 'Unknown',
-        black_username: bu?.username || 'Unknown',
-        red_country:    ru?.country  || null,
-        black_country:  bu?.country  || null,
-      };
+      return { ...g, red_username: ru?.username || 'Unknown', black_username: bu?.username || 'Unknown', red_country: ru?.country || null, black_country: bu?.country || null };
     });
-
     res.json({ user, games });
   } catch (err) {
-    console.error('Profile error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -136,14 +132,12 @@ router.get('/game/:gameId', authMiddleware, (req, res) => {
     if (!game) return res.status(404).json({ error: 'Game not found' });
     const ru = dbGet('SELECT username, country FROM users WHERE id = ?', [game.player_red_id]);
     const bu = dbGet('SELECT username, country FROM users WHERE id = ?', [game.player_black_id]);
-    game.red_username   = ru?.username || 'Unknown';
+    game.red_username = ru?.username || 'Unknown';
     game.black_username = bu?.username || 'Unknown';
-    game.red_country    = ru?.country  || null;
-    game.black_country  = bu?.country  || null;
+    game.red_country = ru?.country || null;
+    game.black_country = bu?.country || null;
     let movesData = null;
-    if (game.moves_json) {
-      try { movesData = JSON.parse(game.moves_json); } catch {}
-    }
+    if (game.moves_json) { try { movesData = JSON.parse(game.moves_json); } catch {} }
     const { moves_json, ...gameClean } = game;
     res.json({ game: gameClean, movesData });
   } catch (err) {
@@ -158,6 +152,69 @@ router.get('/leaderboard', (req, res) => {
     );
     res.json({ players });
   } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Admin API ─────────────────────────────────────────────────────────────────
+router.get('/admin/stats', adminMiddleware, (req, res) => {
+  try {
+    const totalUsers    = dbGet('SELECT COUNT(*) as count FROM users');
+    const totalGames    = dbGet('SELECT COUNT(*) as count FROM games WHERE result IS NOT NULL');
+    const todayUsers    = dbGet("SELECT COUNT(*) as count FROM users WHERE date(created_at) = date('now')");
+    const todayGames    = dbGet("SELECT COUNT(*) as count FROM games WHERE date(completed_at) = date('now') AND result IS NOT NULL");
+    const activeUsers   = dbGet("SELECT COUNT(*) as count FROM users WHERE datetime(last_seen) > datetime('now', '-1 hour')");
+    const topPlayer     = dbGet('SELECT username, elo, wins, country FROM users ORDER BY elo DESC LIMIT 1');
+    const avgElo        = dbGet('SELECT AVG(elo) as avg FROM users');
+    const totalWins     = dbGet("SELECT COUNT(*) as count FROM games WHERE result IN ('red_win','black_win')");
+    const totalDraws    = dbGet("SELECT COUNT(*) as count FROM games WHERE result = 'draw'");
+
+    const recentGames = dbAll(
+      `SELECT g.id, g.result, g.moves_count, g.completed_at,
+        u1.username as red_username, u2.username as black_username,
+        g.red_elo_before, g.black_elo_before, g.red_elo_after, g.black_elo_after
+       FROM games g
+       JOIN users u1 ON g.player_red_id = u1.id
+       JOIN users u2 ON g.player_black_id = u2.id
+       WHERE g.result IS NOT NULL
+       ORDER BY g.completed_at DESC LIMIT 10`
+    );
+
+    const recentUsers = dbAll(
+      'SELECT username, elo, wins, losses, draws, games_played, country, created_at FROM users ORDER BY created_at DESC LIMIT 10'
+    );
+
+    const gamesByDay = dbAll(
+      `SELECT date(completed_at) as day, COUNT(*) as count
+       FROM games WHERE result IS NOT NULL AND completed_at > datetime('now', '-7 days')
+       GROUP BY date(completed_at) ORDER BY day ASC`
+    );
+
+    const usersByDay = dbAll(
+      `SELECT date(created_at) as day, COUNT(*) as count
+       FROM users WHERE created_at > datetime('now', '-7 days')
+       GROUP BY date(created_at) ORDER BY day ASC`
+    );
+
+    res.json({
+      stats: {
+        totalUsers:  totalUsers?.count  || 0,
+        totalGames:  totalGames?.count  || 0,
+        todayUsers:  todayUsers?.count  || 0,
+        todayGames:  todayGames?.count  || 0,
+        activeUsers: activeUsers?.count || 0,
+        avgElo:      Math.round(avgElo?.avg || 1200),
+        totalWins:   totalWins?.count   || 0,
+        totalDraws:  totalDraws?.count  || 0,
+        topPlayer,
+      },
+      recentGames,
+      recentUsers,
+      gamesByDay,
+      usersByDay,
+    });
+  } catch (err) {
+    console.error('Admin stats error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
