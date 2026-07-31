@@ -90,7 +90,12 @@ export default function ProfilePage() {
     setSavingCountry(false);
   }
 
-  if (loading) return <div className="page" style={{ justifyContent: 'center', alignItems: 'center', gap: 16 }}><div className="queue-spinner" /></div>;
+  if (loading) return (
+    <div className="page" style={{ justifyContent: 'center', alignItems: 'center', gap: 16 }}>
+      <div className="queue-spinner" />
+    </div>
+  );
+
   if (error || !profile) return (
     <div className="page" style={{ justifyContent: 'center', alignItems: 'center', gap: 16 }}>
       <p style={{ color: 'var(--red-col)' }}>{error || 'Player not found.'}</p>
@@ -99,7 +104,10 @@ export default function ProfilePage() {
   );
 
   const winRate  = profile.games_played > 0 ? Math.round((profile.wins / profile.games_played) * 100) : 0;
-  const eloTitle = profile.elo >= 1800 ? 'Master' : profile.elo >= 1600 ? 'Expert' : profile.elo >= 1400 ? 'Advanced' : profile.elo >= 1200 ? 'Intermediate' : 'Beginner';
+  const eloTitle = profile.elo >= 1800 ? 'Master'
+                 : profile.elo >= 1600 ? 'Expert'
+                 : profile.elo >= 1400 ? 'Advanced'
+                 : profile.elo >= 1200 ? 'Intermediate' : 'Beginner';
   const countryObj = COUNTRIES.find(c => c.code === profile.country);
 
   return (
@@ -134,8 +142,7 @@ export default function ProfilePage() {
                 >
                   {countryObj
                     ? <><FlagImg code={countryObj.code} size={14} /> {countryObj.name}</>
-                    : '🌍 Set your country'
-                  }
+                    : '🌍 Set your country'}
                   {' '}▾
                 </button>
                 {profile.country && (
@@ -150,17 +157,16 @@ export default function ProfilePage() {
         {/* Country picker */}
         {isMe && showCountryPicker && (
           <div style={{
-            background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)',
-            padding: 16, display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 260, overflowY: 'auto',
+            background: 'var(--bg-card)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-lg)', padding: 16,
+            display: 'flex', flexWrap: 'wrap', gap: 8,
+            maxHeight: 260, overflowY: 'auto',
           }}>
             <div style={{ width: '100%', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>
               Select your country
             </div>
             {COUNTRIES.map(c => (
-              <button
-                key={c.code}
-                disabled={savingCountry}
-                onClick={() => handleSetCountry(c.code)}
+              <button key={c.code} disabled={savingCountry} onClick={() => handleSetCountry(c.code)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 7, padding: '5px 12px',
                   borderRadius: 99,
@@ -169,10 +175,8 @@ export default function ProfilePage() {
                   color: profile.country === c.code ? 'var(--accent)' : 'var(--text-secondary)',
                   cursor: 'pointer', fontSize: 12, fontFamily: 'var(--font-main)',
                   fontWeight: profile.country === c.code ? 700 : 400, transition: 'all 0.15s',
-                }}
-              >
-                <FlagImg code={c.code} size={14} />
-                {c.name}
+                }}>
+                <FlagImg code={c.code} size={14} /> {c.name}
               </button>
             ))}
           </div>
@@ -193,58 +197,63 @@ export default function ProfilePage() {
           ))}
         </div>
 
-        {/* Game history */}
-        <div className="history-section">
-          <h2>Recent Games <span style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 400 }}>({games.length})</span></h2>
-          {games.length === 0 ? (
-            <div style={{ color: 'var(--text-muted)', fontSize: 14, padding: '24px 0', textAlign: 'center' }}>
-              No completed games yet.{' '}
-              <span style={{ cursor: 'pointer', color: 'var(--accent)' }} onClick={() => navigate('/')}>Play one!</span>
-            </div>
-          ) : (
-            <div className="history-list">
-              {games.map(g => {
-                const isRed     = g.player_red_id === profile.id;
-                const opponent  = isRed ? g.black_username : g.red_username;
-                const oppCountry= isRed ? g.black_country  : g.red_country;
-                const eloBefore = isRed ? g.red_elo_before   : g.black_elo_before;
-                const eloAfter  = isRed ? g.red_elo_after    : g.black_elo_after;
-                const eloChange = (eloAfter || eloBefore) - eloBefore;
+        {/* Game history — only visible to the profile owner */}
+        {isMe && (
+          <div className="history-section">
+            <h2>Recent Games <span style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 400 }}>({games.length})</span></h2>
+            {games.length === 0 ? (
+              <div style={{ color: 'var(--text-muted)', fontSize: 14, padding: '24px 0', textAlign: 'center' }}>
+                No completed games yet.{' '}
+                <span style={{ cursor: 'pointer', color: 'var(--accent)' }} onClick={() => navigate('/')}>Play one!</span>
+              </div>
+            ) : (
+              <div className="history-list">
+                {games.map(g => {
+                  const isRed      = g.player_red_id === profile.id;
+                  const opponent   = isRed ? g.black_username : g.red_username;
+                  const oppCountry = isRed ? g.black_country  : g.red_country;
+                  const eloBefore  = isRed ? g.red_elo_before   : g.black_elo_before;
+                  const eloAfter   = isRed ? g.red_elo_after    : g.black_elo_after;
+                  const eloChange  = (eloAfter || eloBefore) - eloBefore;
 
-                let resultLabel, resultClass;
-                if      (g.result === 'draw')        { resultLabel = 'Draw';      resultClass = 'draw'; }
-                else if (g.result === 'abandoned')   { resultLabel = 'Abandoned'; resultClass = 'draw'; }
-                else if (g.winner_id === profile.id) { resultLabel = 'Win';       resultClass = 'win';  }
-                else                                 { resultLabel = 'Loss';      resultClass = 'loss'; }
+                  let resultLabel, resultClass;
+                  if      (g.result === 'draw')        { resultLabel = 'Draw';      resultClass = 'draw'; }
+                  else if (g.result === 'abandoned')   { resultLabel = 'Abandoned'; resultClass = 'draw'; }
+                  else if (g.winner_id === profile.id) { resultLabel = 'Win';       resultClass = 'win';  }
+                  else                                 { resultLabel = 'Loss';      resultClass = 'loss'; }
 
-                return (
-                  <div key={g.id} className="history-item">
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span className="history-vs">vs </span>
-                        <span className="history-opponent">{opponent || 'Unknown'}</span>
-                        {oppCountry && <FlagImg code={oppCountry} size={13} />}
+                  return (
+                    <div key={g.id} className="history-item">
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span className="history-vs">vs </span>
+                          <span className="history-opponent">{opponent || 'Unknown'}</span>
+                          {oppCountry && <FlagImg code={oppCountry} size={13} />}
+                        </div>
+                        <div className="history-meta">
+                          {g.moves_count || 0} moves
+                          {g.completed_at ? ` · ${formatDate(g.completed_at)}` : ''}
+                        </div>
                       </div>
-                      <div className="history-meta">
-                        {g.moves_count || 0} moves
-                        {g.completed_at ? ` · ${formatDate(g.completed_at)}` : ''}
+                      <div className="history-right" style={{ gap: 8, flexShrink: 0 }}>
+                        <span className="history-elo-change"
+                          style={{ color: eloChange >= 0 ? 'var(--green)' : 'var(--red-col)', fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700 }}>
+                          {eloChange >= 0 ? '+' : ''}{eloChange}
+                        </span>
+                        <span className={`history-result ${resultClass}`}>{resultLabel}</span>
+                        <button className="btn btn-ghost btn-sm"
+                          style={{ fontSize: 11, padding: '4px 10px' }}
+                          onClick={() => navigate(`/review/${g.id}`)}>
+                          ▶ Review
+                        </button>
                       </div>
                     </div>
-                    <div className="history-right" style={{ gap: 8, flexShrink: 0 }}>
-                      <span className="history-elo-change"
-                        style={{ color: eloChange >= 0 ? 'var(--green)' : 'var(--red-col)', fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700 }}>
-                        {eloChange >= 0 ? '+' : ''}{eloChange}
-                      </span>
-                      <span className={`history-result ${resultClass}`}>{resultLabel}</span>
-                      <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '4px 10px' }}
-                        onClick={() => navigate(`/review/${g.id}`)}>▶ Review</button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
