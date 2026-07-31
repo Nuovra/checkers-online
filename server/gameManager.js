@@ -250,7 +250,7 @@ function setupSocket(io) {
 
           const difficulty = getBotDifficulty(playerData.elo, bot.elo);
           await createBotGame(io, playerData, bot, tcId, difficulty);
-        }, 45000);
+        }, 10000);
 
         socket.once('leave_queue', () => clearTimeout(botMatchTimer));
         socket.once('game_started', () => clearTimeout(botMatchTimer));

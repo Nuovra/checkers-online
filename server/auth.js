@@ -109,7 +109,13 @@ router.get('/profile/:username', async (req, res) => {
     const games = await Promise.all(rawGames.map(async g => {
       const ru = await dbGet('SELECT username, country FROM users WHERE id = ?', [g.player_red_id]);
       const bu = await dbGet('SELECT username, country FROM users WHERE id = ?', [g.player_black_id]);
-      return { ...g, red_username: ru?.username || 'Unknown', black_username: bu?.username || 'Unknown', red_country: ru?.country || null, black_country: bu?.country || null };
+      return {
+        ...g,
+        red_username:   ru?.username || 'Unknown',
+        black_username: bu?.username || 'Unknown',
+        red_country:    ru?.country  || null,
+        black_country:  bu?.country  || null,
+      };
     }));
 
     res.json({ user, games });
@@ -130,10 +136,10 @@ router.get('/game/:gameId', authMiddleware, async (req, res) => {
     if (!game) return res.status(404).json({ error: 'Game not found' });
     const ru = await dbGet('SELECT username, country FROM users WHERE id = ?', [game.player_red_id]);
     const bu = await dbGet('SELECT username, country FROM users WHERE id = ?', [game.player_black_id]);
-    game.red_username = ru?.username || 'Unknown';
+    game.red_username   = ru?.username || 'Unknown';
     game.black_username = bu?.username || 'Unknown';
-    game.red_country = ru?.country || null;
-    game.black_country = bu?.country || null;
+    game.red_country    = ru?.country  || null;
+    game.black_country  = bu?.country  || null;
     let movesData = null;
     if (game.moves_json) { try { movesData = JSON.parse(game.moves_json); } catch {} }
     const { moves_json, ...gameClean } = game;
@@ -143,22 +149,41 @@ router.get('/game/:gameId', authMiddleware, async (req, res) => {
 
 router.get('/leaderboard', async (req, res) => {
   try {
-    const players = await dbAll(
-      'SELECT id, username, elo, wins, losses, draws, games_played, current_streak, best_streak, country FROM users WHERE games_played > 0 ORDER BY elo DESC LIMIT 50'
+    // Real players top 50
+    const realPlayers = await dbAll(
+      `SELECT id, username, elo, wins, losses, draws, games_played, current_streak, best_streak, country
+       FROM users
+       WHERE email NOT LIKE '%@checkers.bot'
+       AND games_played > 0
+       ORDER BY elo DESC LIMIT 50`
     );
-    res.json({ players });
+
+    // Fill rest with bots to make leaderboard look active
+    const botPlayers = await dbAll(
+      `SELECT id, username, elo, wins, losses, draws, games_played, current_streak, best_streak, country
+       FROM users
+       WHERE email LIKE '%@checkers.bot'
+       ORDER BY elo DESC LIMIT 150`
+    );
+
+    // Merge, sort by ELO, return top 200
+    const allPlayers = [...realPlayers, ...botPlayers]
+      .sort((a, b) => b.elo - a.elo)
+      .slice(0, 200);
+
+    res.json({ players: allPlayers });
   } catch (err) { res.status(500).json({ error: 'Server error' }); }
 });
 
 router.get('/admin/stats', adminMiddleware, async (req, res) => {
   try {
-    const totalUsers  = await dbGet('SELECT COUNT(*) as count FROM users');
+    const totalUsers  = await dbGet("SELECT COUNT(*) as count FROM users WHERE email NOT LIKE '%@checkers.bot'");
     const totalGames  = await dbGet("SELECT COUNT(*) as count FROM games WHERE result IS NOT NULL");
-    const todayUsers  = await dbGet("SELECT COUNT(*) as count FROM users WHERE DATE(created_at) = CURRENT_DATE");
+    const todayUsers  = await dbGet("SELECT COUNT(*) as count FROM users WHERE DATE(created_at) = CURRENT_DATE AND email NOT LIKE '%@checkers.bot'");
     const todayGames  = await dbGet("SELECT COUNT(*) as count FROM games WHERE DATE(completed_at) = CURRENT_DATE AND result IS NOT NULL");
-    const activeUsers = await dbGet("SELECT COUNT(*) as count FROM users WHERE last_seen > NOW() - INTERVAL '1 hour'");
-    const topPlayer   = await dbGet('SELECT username, elo, wins, country FROM users ORDER BY elo DESC LIMIT 1');
-    const avgElo      = await dbGet('SELECT AVG(elo) as avg FROM users');
+    const activeUsers = await dbGet("SELECT COUNT(*) as count FROM users WHERE last_seen > NOW() - INTERVAL '1 hour' AND email NOT LIKE '%@checkers.bot'");
+    const topPlayer   = await dbGet("SELECT username, elo, wins, country FROM users WHERE email NOT LIKE '%@checkers.bot' ORDER BY elo DESC LIMIT 1");
+    const avgElo      = await dbGet("SELECT AVG(elo) as avg FROM users WHERE email NOT LIKE '%@checkers.bot'");
     const totalWins   = await dbGet("SELECT COUNT(*) as count FROM games WHERE result IN ('red_win','black_win')");
     const totalDraws  = await dbGet("SELECT COUNT(*) as count FROM games WHERE result = 'draw'");
 
@@ -174,7 +199,9 @@ router.get('/admin/stats', adminMiddleware, async (req, res) => {
     );
 
     const recentUsers = await dbAll(
-      'SELECT username, elo, wins, losses, draws, games_played, country, created_at FROM users ORDER BY created_at DESC LIMIT 10', []
+      `SELECT username, elo, wins, losses, draws, games_played, country, created_at
+       FROM users WHERE email NOT LIKE '%@checkers.bot'
+       ORDER BY created_at DESC LIMIT 10`, []
     );
 
     const gamesByDay = await dbAll(
@@ -186,6 +213,7 @@ router.get('/admin/stats', adminMiddleware, async (req, res) => {
     const usersByDay = await dbAll(
       `SELECT DATE(created_at) as day, COUNT(*) as count
        FROM users WHERE created_at > NOW() - INTERVAL '7 days'
+       AND email NOT LIKE '%@checkers.bot'
        GROUP BY DATE(created_at) ORDER BY day ASC`, []
     );
 
