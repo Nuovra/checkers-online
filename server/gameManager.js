@@ -6,11 +6,11 @@ const { calculateNewRatings } = require('./elo');
 const { JWT_SECRET } = require('./auth');
 const { seedBotAccounts, findMatchingBot, getBotDifficulty, isBot, getFakeOnlineCount } = require('./botManager');
 
-const activeGames  = new Map();
-const matchQueue   = [];
-const userSockets  = new Map();
-const socketUsers  = new Map();
-const botGameTimers = new Map(); // gameId -> bot move timeout
+const activeGames   = new Map();
+const matchQueue    = [];
+const userSockets   = new Map();
+const socketUsers   = new Map();
+const botGameTimers = new Map();
 
 const TIME_CONTROLS = {
   bullet1: { name: 'Bullet', time: 60000  },
@@ -18,7 +18,6 @@ const TIME_CONTROLS = {
   blitz5:  { name: 'Blitz',  time: 300000 },
 };
 
-// ── Checkers engine (server-side for bot moves) ───────────────────────────────
 const EMPTY = 0, RED = 1, RED_KING = 2, BLACK = 3, BLACK_KING = 4;
 function isRed(p)      { return p === RED   || p === RED_KING;   }
 function isBlack(p)    { return p === BLACK || p === BLACK_KING; }
@@ -64,16 +63,13 @@ function getBotMove(board, botColor, difficulty) {
   const moves = engine.getLegalMoves(board, botColor);
   if (!moves.length) return null;
   const rand = () => moves[Math.floor(Math.random() * moves.length)];
-
   if (difficulty === 'easy') {
     if (Math.random() < 0.7) return rand();
     const caps = moves.filter(m => m.captures.length > 0);
     return caps.length ? caps[Math.floor(Math.random() * caps.length)] : rand();
   }
-
   const depth = difficulty === 'hard' ? 6 : 3;
   if (difficulty === 'medium' && Math.random() < 0.2) return rand();
-
   let bestVal = -Infinity, bestMoves = [];
   const next = botColor === 'red' ? 'black' : 'red';
   for (const m of moves) {
@@ -84,31 +80,30 @@ function getBotMove(board, botColor, difficulty) {
   return bestMoves[Math.floor(Math.random() * bestMoves.length)];
 }
 
-// ── Game state ────────────────────────────────────────────────────────────────
 class GameState {
   constructor(gameId, redPlayer, blackPlayer, timeControl, timeControlId, isVsBot = false, botColor = null, botDifficulty = null) {
-    this.id            = gameId;
-    this.board         = engine.createBoard();
-    this.turn          = 'red';
-    this.redPlayer     = redPlayer;
-    this.blackPlayer   = blackPlayer;
-    this.moves         = [];
-    this.boardHistory  = [engine.cloneBoard(engine.createBoard())];
-    this.startedAt     = Date.now();
-    this.status        = 'active';
-    this.result        = null;
+    this.id               = gameId;
+    this.board            = engine.createBoard();
+    this.turn             = 'red';
+    this.redPlayer        = redPlayer;
+    this.blackPlayer      = blackPlayer;
+    this.moves            = [];
+    this.boardHistory     = [engine.cloneBoard(engine.createBoard())];
+    this.startedAt        = Date.now();
+    this.status           = 'active';
+    this.result           = null;
     this.movesSinceCapture = 0;
-    this.timeControl   = timeControl;
-    this.timeControlId = timeControlId;
-    this.redTime       = timeControl.time;
-    this.blackTime     = timeControl.time;
-    this.lastMoveTime  = Date.now();
-    this.timerInterval = null;
+    this.timeControl      = timeControl;
+    this.timeControlId    = timeControlId;
+    this.redTime          = timeControl.time;
+    this.blackTime        = timeControl.time;
+    this.lastMoveTime     = Date.now();
+    this.timerInterval    = null;
     this._disconnectTimer = null;
     this._disconnectGrace = null;
-    this.isVsBot       = isVsBot;
-    this.botColor      = botColor;
-    this.botDifficulty = botDifficulty;
+    this.isVsBot          = isVsBot;
+    this.botColor         = botColor;
+    this.botDifficulty    = botDifficulty;
   }
 
   getCurrentTimes() {
@@ -134,47 +129,36 @@ class GameState {
   }
 }
 
-// ── Streak update ─────────────────────────────────────────────────────────────
 async function updateStreak(userId, won) {
   try {
     const user = await dbGet('SELECT current_streak, best_streak FROM users WHERE id = ?', [userId]);
     if (!user) return;
-    let cur  = user.current_streak || 0;
-    let best = user.best_streak    || 0;
+    let cur = user.current_streak || 0, best = user.best_streak || 0;
     if (won) { cur++; if (cur > best) best = cur; } else cur = 0;
     await dbRun('UPDATE users SET current_streak=?, best_streak=? WHERE id=?', [cur, best, userId]);
   } catch (err) { console.error('Streak error:', err); }
 }
 
-// ── Schedule bot move ─────────────────────────────────────────────────────────
 function scheduleBotMove(io, game) {
   if (!game.isVsBot || game.status !== 'active') return;
   if (game.turn !== game.botColor) return;
-
-  const thinkTime = game.botDifficulty === 'easy' ? 600
-                  : game.botDifficulty === 'medium' ? 1200 : 2000;
-
+  const thinkTime = game.botDifficulty === 'easy' ? 600 : game.botDifficulty === 'medium' ? 1200 : 2000;
   const timer = setTimeout(async () => {
     if (game.status !== 'active') return;
     const move = getBotMove(game.board, game.botColor, game.botDifficulty);
     if (!move) { await finishGame(io, game, game.botColor === 'red' ? 'black_win' : 'red_win'); return; }
-
     const now = Date.now();
     const elapsed = now - game.lastMoveTime;
     if (game.botColor === 'red') game.redTime   = Math.max(0, game.redTime   - elapsed);
     else                         game.blackTime  = Math.max(0, game.blackTime - elapsed);
     game.lastMoveTime = now;
-
     game.board = engine.applyMove(game.board, move);
     game.moves.push({ color: game.botColor, from: move.from, to: move.to, captures: move.captures, path: move.path });
     game.boardHistory.push(engine.cloneBoard(game.board));
-
     if (move.captures.length > 0) game.movesSinceCapture = 0;
     else game.movesSinceCapture++;
-
     game.turn = game.turn === 'red' ? 'black' : 'red';
     const result = engine.getGameResult(game.board, game.turn);
-
     if (result) await finishGame(io, game, result);
     else if (game.movesSinceCapture >= 80) await finishGame(io, game, 'draw');
     else {
@@ -183,13 +167,10 @@ function scheduleBotMove(io, game) {
       if (sock) sock.emit('game_update', game.toJSON(realPlayerId));
     }
   }, thinkTime);
-
   botGameTimers.set(game.id, timer);
 }
 
-// ── Socket setup ──────────────────────────────────────────────────────────────
 function setupSocket(io) {
-  // Seed bots on startup
   seedBotAccounts().catch(console.error);
 
   io.use(async (socket, next) => {
@@ -218,7 +199,6 @@ function setupSocket(io) {
     socket.on('join_queue', async ({ timeControlId } = {}) => {
       const idx = matchQueue.findIndex(q => q.userId === userId);
       if (idx !== -1) matchQueue.splice(idx, 1);
-
       for (const [, game] of activeGames) {
         if (game.status === 'active' && (game.redPlayer.id === userId || game.blackPlayer.id === userId)) {
           socket.emit('error_msg', 'Already in an active game');
@@ -226,35 +206,25 @@ function setupSocket(io) {
           return;
         }
       }
-
       const tcId = TIME_CONTROLS[timeControlId] ? timeControlId : 'blitz5';
       matchQueue.push({ userId, elo: socket.userInfo.elo, timeControlId: tcId });
       socket.emit('queue_joined', { timeControlId: tcId });
-
-      // Try real match first
       const matched = tryMatch(io);
-
-      // If no real match after 45 seconds, match with bot
       if (!matched) {
         const botMatchTimer = setTimeout(async () => {
           const stillInQueue = matchQueue.findIndex(q => q.userId === userId);
-          if (stillInQueue === -1) return; // Already matched
-
+          if (stillInQueue === -1) return;
           matchQueue.splice(stillInQueue, 1);
-
           const playerData = await dbGet('SELECT id, username, elo FROM users WHERE id = ?', [userId]);
           if (!playerData) return;
-
           const bot = await findMatchingBot(playerData.elo);
           if (!bot) return;
-
           const difficulty = getBotDifficulty(playerData.elo, bot.elo);
           await createBotGame(io, playerData, bot, tcId, difficulty);
         }, 10000);
-
         socket.once('leave_queue', () => clearTimeout(botMatchTimer));
         socket.once('game_started', () => clearTimeout(botMatchTimer));
-        socket.once('disconnect', () => clearTimeout(botMatchTimer));
+        socket.once('disconnect',   () => clearTimeout(botMatchTimer));
       }
     });
 
@@ -269,32 +239,25 @@ function setupSocket(io) {
       const playerColor = game.redPlayer.id === userId ? 'red' : game.blackPlayer.id === userId ? 'black' : null;
       if (!playerColor) return socket.emit('error_msg', 'Not in this game');
       if (game.turn !== playerColor) return socket.emit('error_msg', 'Not your turn');
-
       const legalMoves = engine.getLegalMoves(game.board, game.turn);
       const move = engine.findMatchingMove(legalMoves, from, to);
       if (!move) return socket.emit('error_msg', 'Illegal move');
-
       const now = Date.now();
       const elapsed = now - game.lastMoveTime;
       if (playerColor === 'red') game.redTime   = Math.max(0, game.redTime   - elapsed);
       else                       game.blackTime  = Math.max(0, game.blackTime - elapsed);
       game.lastMoveTime = now;
-
       game.board = engine.applyMove(game.board, move);
       game.moves.push({ color: playerColor, from, to, captures: move.captures, path: move.path });
       game.boardHistory.push(engine.cloneBoard(game.board));
-
       if (move.captures.length > 0) game.movesSinceCapture = 0;
       else game.movesSinceCapture++;
-
       game.turn = game.turn === 'red' ? 'black' : 'red';
       const result = engine.getGameResult(game.board, game.turn);
-
       if (result) await finishGame(io, game, result);
       else if (game.movesSinceCapture >= 80) await finishGame(io, game, 'draw');
       else {
         emitToGame(io, game, 'game_update', (uid) => game.toJSON(uid));
-        // Schedule bot move if vs bot
         if (game.isVsBot) scheduleBotMove(io, game);
       }
     });
@@ -310,11 +273,7 @@ function setupSocket(io) {
     socket.on('offer_draw', ({ gameId }) => {
       const game = activeGames.get(gameId);
       if (!game || game.status !== 'active') return;
-      if (game.isVsBot) {
-        // Bot always declines draw
-        socket.emit('draw_declined', { gameId });
-        return;
-      }
+      if (game.isVsBot) { socket.emit('draw_declined', { gameId }); return; }
       const oppId = game.redPlayer.id === userId ? game.blackPlayer.id : game.redPlayer.id;
       const opp = userSockets.get(oppId);
       if (opp) opp.emit('draw_offered', { gameId, from: socket.userInfo.username });
@@ -338,11 +297,7 @@ function setupSocket(io) {
     socket.on('request_rematch', ({ gameId }) => {
       const game = activeGames.get(gameId);
       if (!game) return;
-      if (game.isVsBot) {
-        // For bot games, just create a new bot game
-        socket.emit('rematch_declined');
-        return;
-      }
+      if (game.isVsBot) { socket.emit('rematch_declined'); return; }
       const oppId = game.redPlayer.id === userId ? game.blackPlayer.id : game.redPlayer.id;
       const opp = userSockets.get(oppId);
       if (opp) opp.emit('rematch_offered', { gameId, from: socket.userInfo.username });
@@ -380,11 +335,11 @@ function setupSocket(io) {
       if (!game) return;
       if (game.redPlayer.id !== userId && game.blackPlayer.id !== userId) return;
       if (game.isVsBot) {
-        // Bot auto-replies
-        const replies = ['Good move!', 'Interesting...', 'I see your strategy.', 'Well played.', 'Let me think...', '🤔'];
+        const replies = ['Good move!', 'Interesting...', 'I see your strategy.', 'Well played.', 'Let me think...', '🤔', 'Nice!', 'Hmm...'];
         const reply = replies[Math.floor(Math.random() * replies.length)];
         setTimeout(() => {
-          socket.emit('game_chat_msg', { from: game.isVsBot ? (game.botColor === 'red' ? game.redPlayer.username : game.blackPlayer.username) : 'Bot', message: reply, timestamp: Date.now() });
+          const botUsername = game.botColor === 'red' ? game.redPlayer.username : game.blackPlayer.username;
+          socket.emit('game_chat_msg', { from: botUsername, message: reply, timestamp: Date.now() });
         }, 800);
         return;
       }
@@ -397,35 +352,25 @@ function setupSocket(io) {
       console.log(`Disconnected: ${socket.userInfo.username}`);
       const idx = matchQueue.findIndex(q => q.userId === userId);
       if (idx !== -1) matchQueue.splice(idx, 1);
-
       for (const [, game] of activeGames) {
         if (game.status !== 'active') continue;
         if (game.redPlayer.id !== userId && game.blackPlayer.id !== userId) continue;
-
         if (game.isVsBot) {
-          // Bot games — finish immediately with loss for disconnecting player
           const playerColor = game.redPlayer.id === userId ? 'red' : 'black';
           await finishGame(io, game, playerColor === 'red' ? 'black_win' : 'red_win');
           continue;
         }
-
-        // Real game — notify opponent, give 10 second grace period
         const oppId = game.redPlayer.id === userId ? game.blackPlayer.id : game.redPlayer.id;
         const opp   = userSockets.get(oppId);
         if (opp) opp.emit('opponent_disconnected', { gameId: game.id });
-
-        // 10 second grace period for accidental disconnect
         game._disconnectGrace = setTimeout(async () => {
           if (game.status !== 'active') return;
-          // Check if player reconnected
           if (userSockets.has(userId)) return;
-          // Player didn't reconnect — give them a loss
           const playerColor = game.redPlayer.id === userId ? 'red' : 'black';
           console.log(`${socket.userInfo.username} disconnected — awarding loss`);
           await finishGame(io, game, playerColor === 'red' ? 'black_win' : 'red_win');
         }, 10000);
       }
-
       userSockets.delete(userId);
       socketUsers.delete(socket.id);
       io.emit('online_count', getFakeOnlineCount(userSockets.size));
@@ -433,7 +378,6 @@ function setupSocket(io) {
   });
 }
 
-// ── Matchmaking ───────────────────────────────────────────────────────────────
 function tryMatch(io) {
   if (matchQueue.length < 2) return false;
   for (let i = 0; i < matchQueue.length; i++) {
@@ -453,13 +397,11 @@ async function createGame(io, p1, p2) {
   const s1 = userSockets.get(p1.userId);
   const s2 = userSockets.get(p2.userId);
   if (!s1 || !s2) { if (s1) matchQueue.unshift(p1); if (s2) matchQueue.unshift(p2); return; }
-
   const flip    = Math.random() < 0.5;
   const redInfo   = flip ? s1.userInfo : s2.userInfo;
   const blackInfo = flip ? s2.userInfo : s1.userInfo;
   const tcId = p1.timeControlId || 'blitz5';
   const tc   = TIME_CONTROLS[tcId] || TIME_CONTROLS['blitz5'];
-
   const gameId = uuidv4();
   const game = new GameState(
     gameId,
@@ -468,17 +410,25 @@ async function createGame(io, p1, p2) {
     tc, tcId, false, null, null
   );
   activeGames.set(gameId, game);
-
   await dbRun('INSERT INTO games (id, player_red_id, player_black_id, red_elo_before, black_elo_before) VALUES (?, ?, ?, ?, ?)',
     [gameId, redInfo.id, blackInfo.id, redInfo.elo, blackInfo.elo]);
 
+  // ── Timer — runs every 500ms so it never misses the 0 crossing ──────────────
   game.timerInterval = setInterval(async () => {
-    if (game.status !== 'active') { clearInterval(game.timerInterval); return; }
+    if (game.status !== 'active') { clearInterval(game.timerInterval); game.timerInterval = null; return; }
     const times = game.getCurrentTimes();
-    if      (times.redTime   <= 0) { clearInterval(game.timerInterval); await finishGame(io, game, 'black_win'); }
-    else if (times.blackTime <= 0) { clearInterval(game.timerInterval); await finishGame(io, game, 'red_win');   }
-    else emitToGame(io, game, 'timer_update', () => ({ redTime: times.redTime, blackTime: times.blackTime }));
-  }, 1000);
+    if (times.redTime <= 0) {
+      clearInterval(game.timerInterval); game.timerInterval = null;
+      game.redTime = 0;
+      await finishGame(io, game, 'black_win');
+    } else if (times.blackTime <= 0) {
+      clearInterval(game.timerInterval); game.timerInterval = null;
+      game.blackTime = 0;
+      await finishGame(io, game, 'red_win');
+    } else {
+      emitToGame(io, game, 'timer_update', () => ({ redTime: times.redTime, blackTime: times.blackTime }));
+    }
+  }, 500);
 
   const rs = userSockets.get(redInfo.id);
   const bs = userSockets.get(blackInfo.id);
@@ -490,11 +440,9 @@ async function createGame(io, p1, p2) {
 async function createBotGame(io, playerData, botData, tcId, difficulty) {
   const tc  = TIME_CONTROLS[tcId] || TIME_CONTROLS['blitz5'];
   const flip = Math.random() < 0.5;
-
   const redPlayer   = flip ? playerData : botData;
   const blackPlayer = flip ? botData    : playerData;
   const botColor    = flip ? 'black'    : 'red';
-
   const gameId = uuidv4();
   const game = new GameState(
     gameId,
@@ -503,30 +451,41 @@ async function createBotGame(io, playerData, botData, tcId, difficulty) {
     tc, tcId, true, botColor, difficulty
   );
   activeGames.set(gameId, game);
-
   await dbRun('INSERT INTO games (id, player_red_id, player_black_id, red_elo_before, black_elo_before) VALUES (?, ?, ?, ?, ?)',
     [gameId, redPlayer.id, blackPlayer.id, redPlayer.elo, botData.elo]);
 
+  // ── Bot game timer — also 500ms ──────────────────────────────────────────────
+  game.timerInterval = setInterval(async () => {
+    if (game.status !== 'active') { clearInterval(game.timerInterval); game.timerInterval = null; return; }
+    const times = game.getCurrentTimes();
+    if (times.redTime <= 0) {
+      clearInterval(game.timerInterval); game.timerInterval = null;
+      game.redTime = 0;
+      await finishGame(io, game, 'black_win');
+    } else if (times.blackTime <= 0) {
+      clearInterval(game.timerInterval); game.timerInterval = null;
+      game.blackTime = 0;
+      await finishGame(io, game, 'red_win');
+    } else {
+      const realPlayerId = botColor === 'red' ? blackPlayer.id : redPlayer.id;
+      const sock = userSockets.get(realPlayerId);
+      if (sock) sock.emit('timer_update', { redTime: times.redTime, blackTime: times.blackTime });
+    }
+  }, 500);
+
   const playerSocket = userSockets.get(playerData.id);
   if (playerSocket) playerSocket.emit('game_started', game.toJSON(playerData.id));
-
   console.log(`Bot game: ${playerData.username} (${playerData.elo}) vs ${botData.username} (${botData.elo}) [${difficulty}]`);
-
-  // If bot goes first (bot is red), schedule its move
   if (botColor === 'red') scheduleBotMove(io, game);
 }
 
-// ── Finish game ───────────────────────────────────────────────────────────────
 async function finishGame(io, game, result) {
   if (game.status === 'finished') return;
   game.status = 'finished';
   game.result = result;
-
   if (game.timerInterval)    { clearInterval(game.timerInterval);   game.timerInterval    = null; }
   if (game._disconnectTimer) { clearTimeout(game._disconnectTimer); game._disconnectTimer = null; }
   if (game._disconnectGrace) { clearTimeout(game._disconnectGrace); game._disconnectGrace = null; }
-
-  // Clear bot timer
   const botTimer = botGameTimers.get(game.id);
   if (botTimer) { clearTimeout(botTimer); botGameTimers.delete(game.id); }
 
@@ -539,7 +498,6 @@ async function finishGame(io, game, result) {
     const redUser   = await dbGet('SELECT * FROM users WHERE id = ?', [game.redPlayer.id]);
     const blackUser = await dbGet('SELECT * FROM users WHERE id = ?', [game.blackPlayer.id]);
     if (!redUser || !blackUser) throw new Error('Users not found');
-
     redEloBefore   = redUser.elo;
     blackEloBefore = blackUser.elo;
     redEloAfter    = redEloBefore;
@@ -584,7 +542,6 @@ async function finishGame(io, game, result) {
        moves_count=?, moves_json=?, completed_at=NOW() WHERE id=?`,
       [winnerId, result, redEloAfter, blackEloAfter, game.moves.length, movesJson, game.id]
     );
-
     console.log(`ELO: red ${redEloBefore}→${redEloAfter} | black ${blackEloBefore}→${blackEloAfter}`);
   } catch (err) { console.error('finishGame error:', err); }
 
