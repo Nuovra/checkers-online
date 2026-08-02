@@ -11,33 +11,34 @@ const TIME_CONTROLS = [
 
 const BOT_DIFFICULTIES = [
   { id: 'easy',   label: 'Easy',   icon: '🟢', desc: 'Perfect for beginners' },
-  { id: 'medium', label: 'Medium', icon: '🟡', desc: 'A solid challenge' },
-  { id: 'hard',   label: 'Hard',   icon: '🔴', desc: 'Plays to win' },
+  { id: 'medium', label: 'Medium', icon: '🟡', desc: 'A solid challenge'     },
+  { id: 'hard',   label: 'Hard',   icon: '🔴', desc: 'Plays to win'          },
 ];
 
 export default function LobbyPage() {
-  const { user } = useAuth();
+  const { user, isGuest } = useAuth();
   const { socket, connected, onlineCount } = useSocket();
   const navigate = useNavigate();
-  const [mode, setMode] = useState(null); // null | 'online' | 'bot'
-  const [inQueue, setInQueue] = useState(false);
-  const [queueTime, setQueueTime] = useState(0);
+
+  const [mode,       setMode]       = useState(null);
+  const [inQueue,    setInQueue]    = useState(false);
+  const [queueTime,  setQueueTime]  = useState(0);
   const [selectedTC, setSelectedTC] = useState('blitz5');
 
   useEffect(() => {
-    if (!socket) return;
+    if (!socket || isGuest) return;
     function onGameStarted(gameData) { setInQueue(false); navigate('/game', { state: { gameData } }); }
-    function onQueueJoined() { setInQueue(true); }
-    function onQueueLeft() { setInQueue(false); }
+    function onQueueJoined()         { setInQueue(true); }
+    function onQueueLeft()           { setInQueue(false); }
     socket.on('game_started', onGameStarted);
-    socket.on('queue_joined', onQueueJoined);
-    socket.on('queue_left', onQueueLeft);
+    socket.on('queue_joined',  onQueueJoined);
+    socket.on('queue_left',    onQueueLeft);
     return () => {
       socket.off('game_started', onGameStarted);
-      socket.off('queue_joined', onQueueJoined);
-      socket.off('queue_left', onQueueLeft);
+      socket.off('queue_joined',  onQueueJoined);
+      socket.off('queue_left',    onQueueLeft);
     };
-  }, [socket, navigate]);
+  }, [socket, navigate, isGuest]);
 
   useEffect(() => {
     if (!inQueue) { setQueueTime(0); return; }
@@ -45,11 +46,11 @@ export default function LobbyPage() {
     return () => clearInterval(i);
   }, [inQueue]);
 
-  function joinQueue() { if (socket && connected) socket.emit('join_queue', { timeControlId: selectedTC }); }
-  function leaveQueue() { if (socket && connected) socket.emit('leave_queue'); setInQueue(false); }
+  function joinQueue()   { if (socket && connected) socket.emit('join_queue', { timeControlId: selectedTC }); }
+  function leaveQueue()  { if (socket && connected) socket.emit('leave_queue'); setInQueue(false); }
   function startBotGame(difficulty) { navigate('/game/bot', { state: { difficulty } }); }
 
-  const avatar = localStorage.getItem(`avatar_${user.id}`);
+  const avatar = user?.avatar || localStorage.getItem(`avatar_${user?.id}`);
 
   return (
     <div className="page">
@@ -58,39 +59,63 @@ export default function LobbyPage() {
         {/* Hero */}
         <div className="lobby-hero">
           <div className="lobby-hero-avatar">
-            {avatar ? <img src={avatar} alt={user.username} /> : user.username[0].toUpperCase()}
+            {avatar
+              ? <img src={avatar} alt={user?.username} />
+              : (user?.username?.[0] || 'G').toUpperCase()
+            }
           </div>
-          <h1>Welcome, <span>{user.username}</span></h1>
-          <p>What would you like to play?</p>
+          <h1>Welcome, <span>{user?.username || 'Guest'}</span></h1>
+          <p>{isGuest ? 'Playing as guest — create an account to save progress' : 'What would you like to play?'}</p>
         </div>
 
         {/* Mode selection */}
         {!mode && !inQueue && (
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', justifyContent: 'center', width: '100%', maxWidth: 560 }}>
-            {/* Play Online */}
+
+            {/* Play Online card */}
             <div
-              onClick={() => setMode('online')}
+              onClick={() => isGuest ? navigate('/login?signup=1') : setMode('online')}
               style={{
-                flex: 1, minWidth: 220, background: 'var(--bg-card)', border: '2px solid var(--border)',
+                flex: 1, minWidth: 220,
+                background: isGuest ? 'var(--bg-card)' : 'var(--bg-card)',
+                border: `2px solid ${isGuest ? 'rgba(129,182,76,0.3)' : 'var(--border)'}`,
                 borderRadius: 'var(--radius-xl)', padding: '32px 24px', cursor: 'pointer',
                 display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14,
-                transition: 'all 0.2s', textAlign: 'center',
+                transition: 'all 0.2s', textAlign: 'center', position: 'relative',
               }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 12px 40px rgba(129,182,76,0.15)'; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = isGuest ? 'rgba(129,182,76,0.3)' : 'var(--border)'; e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
             >
+              {isGuest && (
+                <div style={{
+                  position: 'absolute', top: 10, right: 10,
+                  background: 'var(--accent)', color: '#000',
+                  fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 99,
+                  textTransform: 'uppercase', letterSpacing: 0.5,
+                }}>Account Required</div>
+              )}
               <div style={{ fontSize: 52 }}>🌐</div>
               <div>
                 <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: '-0.5px' }}>Play Online</div>
-                <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 6 }}>Challenge real players and earn ELO</div>
+                <div style={{ fontSize: 13, color: isGuest ? 'var(--accent)' : 'var(--text-secondary)', marginTop: 6, fontWeight: isGuest ? 700 : 400 }}>
+                  {isGuest ? '🔒 Sign up to Play Online' : 'Challenge real players and earn ELO'}
+                </div>
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
                 <span style={{ width: 7, height: 7, background: 'var(--green)', borderRadius: '50%', boxShadow: '0 0 6px var(--green)', display: 'inline-block' }} />
                 {onlineCount} online now
               </div>
+              {isGuest && (
+                <div style={{
+                  background: 'rgba(129,182,76,0.1)', border: '1px solid rgba(129,182,76,0.3)',
+                  borderRadius: 8, padding: '8px 14px', fontSize: 12, color: 'var(--accent)', fontWeight: 700,
+                }}>
+                  Create a Free Account →
+                </div>
+              )}
             </div>
 
-            {/* Play Bots */}
+            {/* Play Bots card */}
             <div
               onClick={() => setMode('bot')}
               style={{
@@ -105,21 +130,22 @@ export default function LobbyPage() {
               <div style={{ fontSize: 52 }}>🤖</div>
               <div>
                 <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: '-0.5px' }}>Play vs Bot</div>
-                <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 6 }}>Practice against AI, no time limit</div>
+                <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 6 }}>
+                  {isGuest ? 'Practice against AI — free, no account needed' : 'Practice against AI, no time limit'}
+                </div>
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Easy · Medium · Hard</div>
             </div>
           </div>
         )}
 
-        {/* Online — time control + queue */}
-        {mode === 'online' && !inQueue && (
+        {/* Online — time control + queue (logged in only) */}
+        {mode === 'online' && !inQueue && !isGuest && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24, width: '100%', maxWidth: 560 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%' }}>
               <button className="btn btn-ghost btn-sm" onClick={() => setMode(null)}>← Back</button>
               <h2 style={{ fontSize: 20, fontWeight: 800 }}>🌐 Play Online</h2>
             </div>
-
             <div className="tc-section" style={{ width: '100%' }}>
               <div className="tc-section-title">Choose Time Control</div>
               <div className="tc-grid">
@@ -132,7 +158,6 @@ export default function LobbyPage() {
                 ))}
               </div>
             </div>
-
             <button className="find-game-btn" onClick={joinQueue}>♟ Find a Game</button>
             <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>{onlineCount} player{onlineCount !== 1 ? 's' : ''} online</p>
           </div>
@@ -160,12 +185,11 @@ export default function LobbyPage() {
               <button className="btn btn-ghost btn-sm" onClick={() => setMode(null)}>← Back</button>
               <h2 style={{ fontSize: 20, fontWeight: 800 }}>🤖 Play vs Bot</h2>
             </div>
-
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%' }}>
               {BOT_DIFFICULTIES.map(d => (
                 <div
                   key={d.id}
-                  onClick={() => startBotGame(d.id)}
+                  onClick={() => isGuest ? navigate(`/play?difficulty=${d.id}`) : startBotGame(d.id)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 20, padding: '20px 24px',
                     background: 'var(--bg-card)', border: '2px solid var(--border)',
@@ -184,7 +208,7 @@ export default function LobbyPage() {
               ))}
             </div>
             <p style={{ fontSize: 13, color: 'var(--text-muted)', textAlign: 'center' }}>
-              No time limit · No ELO change · Practice freely
+              {isGuest ? 'No account needed · Create one to save your stats' : 'No time limit · No ELO change · Practice freely'}
             </p>
           </div>
         )}

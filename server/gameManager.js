@@ -24,60 +24,166 @@ function isBlack(p)    { return p === BLACK || p === BLACK_KING; }
 function isKing(p)     { return p === RED_KING || p === BLACK_KING; }
 function ownerColor(p) { return isRed(p) ? 'red' : isBlack(p) ? 'black' : null; }
 
-function countPieces(board, color) {
-  let men = 0, kings = 0;
-  for (let r = 0; r < 8; r++)
+// ── Advanced board evaluation ─────────────────────────────────────────────────
+function evaluateBoard(board, botColor) {
+  const oppColor = botColor === 'red' ? 'black' : 'red';
+  let score = 0;
+
+  for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       const p = board[r][c];
-      if (ownerColor(p) === color) { if (isKing(p)) kings++; else men++; }
+      if (p === EMPTY) continue;
+      const color = ownerColor(p);
+      const king  = isKing(p);
+      const isBot = color === botColor;
+      const mult  = isBot ? 1 : -1;
+
+      // Base piece value
+      score += mult * (king ? 5.0 : 1.0);
+
+      // Kings — prefer center control and mobility
+      if (king) {
+        const centerDist = Math.abs(r - 3.5) + Math.abs(c - 3.5);
+        score += mult * (3.5 - centerDist) * 0.2;
+      }
+
+      // Men — reward advancement toward promotion
+      if (!king) {
+        const advance = isBot
+          ? (botColor === 'red'   ? (7 - r) : r)
+          : (oppColor === 'red'   ? (7 - r) : r);
+        score += mult * advance * 0.15;
+
+        // Back row defense — uncrowned piece protecting back row
+        const backRow = isBot
+          ? (botColor === 'red' ? r === 7 : r === 0)
+          : (oppColor === 'red' ? r === 7 : r === 0);
+        if (backRow) score += mult * 0.6;
+      }
+
+      // Edge pieces are less mobile — penalise them
+      if (c === 0 || c === 7) score += mult * -0.25;
+
+      // Center control bonus
+      if (r >= 2 && r <= 5 && c >= 2 && c <= 5) score += mult * 0.12;
+
+      // Triangle / bridge formation bonus (top corner defensive)
+      if (!isBot && !king) {
+        if ((r === 0 && (c === 1 || c === 3)) || (r === 1 && c === 0)) score += mult * -0.3;
+      }
     }
-  return men + kings * 2.5;
+  }
+
+  // Mobility — more available moves = better position
+  const botMoves = engine.getLegalMoves(board, botColor).length;
+  const oppMoves = engine.getLegalMoves(board, oppColor).length;
+  score += (botMoves - oppMoves) * 0.1;
+
+  // Piece count ratio — punish being outnumbered
+  let botPieces = 0, oppPieces = 0, botKings = 0, oppKings = 0;
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+    const p = board[r][c];
+    if (!p) continue;
+    if (ownerColor(p) === botColor) { botPieces++; if (isKing(p)) botKings++; }
+    else                             { oppPieces++; if (isKing(p)) oppKings++; }
+  }
+
+  // Endgame: if winning, prefer trading to simplify
+  if (botPieces > oppPieces) score += (botPieces - oppPieces) * 0.5;
+
+  // King vs man advantage in endgame
+  if (botKings > 0 && oppPieces <= 3) score += botKings * 1.5;
+
+  return score;
 }
 
+// ── Minimax with alpha-beta + move ordering ───────────────────────────────────
 function minimax(board, turn, depth, alpha, beta, maxing, botColor) {
   const res = engine.getGameResult(board, turn);
-  if (res) return res === `${botColor}_win` ? 1000 + depth : -1000 - depth;
-  if (depth === 0) return countPieces(board, botColor) - countPieces(board, botColor === 'red' ? 'black' : 'red');
+  if (res) return res === `${botColor}_win` ? 10000 + depth : -10000 - depth;
+  if (depth === 0) return evaluateBoard(board, botColor);
+
   const moves = engine.getLegalMoves(board, turn);
   const next  = turn === 'red' ? 'black' : 'red';
+
+  // Move ordering: captures first, then by piece advancement
+  const ordered = [...moves].sort((a, b) => {
+    if (b.captures.length !== a.captures.length) return b.captures.length - a.captures.length;
+    return 0;
+  });
+
   if (maxing) {
     let best = -Infinity;
-    for (const m of moves) {
+    for (const m of ordered) {
       const v = minimax(engine.applyMove(board, m), next, depth - 1, alpha, beta, false, botColor);
-      best = Math.max(best, v); alpha = Math.max(alpha, v);
+      best = Math.max(best, v);
+      alpha = Math.max(alpha, v);
       if (beta <= alpha) break;
     }
     return best;
   } else {
     let best = Infinity;
-    for (const m of moves) {
+    for (const m of ordered) {
       const v = minimax(engine.applyMove(board, m), next, depth - 1, alpha, beta, true, botColor);
-      best = Math.min(best, v); beta = Math.min(beta, v);
+      best = Math.min(best, v);
+      beta = Math.min(beta, v);
       if (beta <= alpha) break;
     }
     return best;
   }
 }
 
+// ── Bot move selection by difficulty ─────────────────────────────────────────
 function getBotMove(board, botColor, difficulty) {
   const moves = engine.getLegalMoves(board, botColor);
   if (!moves.length) return null;
   const rand = () => moves[Math.floor(Math.random() * moves.length)];
+  const next = botColor === 'red' ? 'black' : 'red';
+
   if (difficulty === 'easy') {
-    if (Math.random() < 0.7) return rand();
+    // Mostly random — occasionally takes captures
+    if (Math.random() < 0.65) return rand();
     const caps = moves.filter(m => m.captures.length > 0);
     return caps.length ? caps[Math.floor(Math.random() * caps.length)] : rand();
   }
-  const depth = difficulty === 'hard' ? 6 : 3;
-  if (difficulty === 'medium' && Math.random() < 0.2) return rand();
-  let bestVal = -Infinity, bestMoves = [];
-  const next = botColor === 'red' ? 'black' : 'red';
-  for (const m of moves) {
-    const v = minimax(engine.applyMove(board, m), next, depth, -Infinity, Infinity, false, botColor);
-    if (v > bestVal) { bestVal = v; bestMoves = [m]; }
-    else if (v === bestVal) bestMoves.push(m);
+
+  if (difficulty === 'medium') {
+    // Depth 4, 15% random moves
+    if (Math.random() < 0.15) return rand();
+    let bestVal = -Infinity, bestMoves = [];
+    for (const m of moves) {
+      const v = minimax(engine.applyMove(board, m), next, 4, -Infinity, Infinity, false, botColor);
+      if (v > bestVal) { bestVal = v; bestMoves = [m]; }
+      else if (v === bestVal) bestMoves.push(m);
+    }
+    return bestMoves[Math.floor(Math.random() * bestMoves.length)];
   }
-  return bestMoves[Math.floor(Math.random() * bestMoves.length)];
+
+  if (difficulty === 'hard') {
+    // Depth 8 — very strong, no randomness
+    let bestVal = -Infinity, bestMoves = [];
+    const ordered = [...moves].sort((a, b) => b.captures.length - a.captures.length);
+    for (const m of ordered) {
+      const v = minimax(engine.applyMove(board, m), next, 8, -Infinity, Infinity, false, botColor);
+      if (v > bestVal) { bestVal = v; bestMoves = [m]; }
+      else if (v === bestVal) bestMoves.push(m);
+    }
+    return bestMoves[Math.floor(Math.random() * bestMoves.length)];
+  }
+
+  // Elite difficulty (1700+ ELO bots) — depth 10
+  if (difficulty === 'elite') {
+    let bestVal = -Infinity, bestMoves = [];
+    const ordered = [...moves].sort((a, b) => b.captures.length - a.captures.length);
+    for (const m of ordered) {
+      const v = minimax(engine.applyMove(board, m), next, 10, -Infinity, Infinity, false, botColor);
+      if (v > bestVal) { bestVal = v; bestMoves = [m]; }
+      else if (v === bestVal) bestMoves.push(m);
+    }
+    return bestMoves[0] || rand();
+  }
+
+  return rand();
 }
 
 class GameState {
@@ -142,7 +248,13 @@ async function updateStreak(userId, won) {
 function scheduleBotMove(io, game) {
   if (!game.isVsBot || game.status !== 'active') return;
   if (game.turn !== game.botColor) return;
-  const thinkTime = game.botDifficulty === 'easy' ? 600 : game.botDifficulty === 'medium' ? 1200 : 2000;
+
+  // Elite bots think longer
+  const thinkTime = game.botDifficulty === 'easy'   ? 500
+                  : game.botDifficulty === 'medium'  ? 1000
+                  : game.botDifficulty === 'hard'    ? 1800
+                  : 2500; // elite
+
   const timer = setTimeout(async () => {
     if (game.status !== 'active') return;
     const move = getBotMove(game.board, game.botColor, game.botDifficulty);
@@ -219,7 +331,7 @@ function setupSocket(io) {
           if (!playerData) return;
           const bot = await findMatchingBot(playerData.elo);
           if (!bot) return;
-          const difficulty = getBotDifficulty(playerData.elo, bot.elo);
+          const difficulty = getBotDifficultyFromElo(playerData.elo, bot.elo);
           await createBotGame(io, playerData, bot, tcId, difficulty);
         }, 10000);
         socket.once('leave_queue', () => clearTimeout(botMatchTimer));
@@ -310,7 +422,7 @@ function setupSocket(io) {
       if (game.isVsBot) {
         const playerData = await dbGet('SELECT id, username, elo FROM users WHERE id = ?', [userId]);
         const bot = await findMatchingBot(playerData.elo);
-        const difficulty = getBotDifficulty(playerData.elo, bot.elo);
+        const difficulty = getBotDifficultyFromElo(playerData.elo, bot.elo);
         await createBotGame(io, playerData, bot, tcId, difficulty);
         return;
       }
@@ -335,7 +447,7 @@ function setupSocket(io) {
       if (!game) return;
       if (game.redPlayer.id !== userId && game.blackPlayer.id !== userId) return;
       if (game.isVsBot) {
-        const replies = ['Good move!', 'Interesting...', 'I see your strategy.', 'Well played.', 'Let me think...', '🤔', 'Nice!', 'Hmm...'];
+        const replies = ['Good move!', 'Interesting...', 'I see your strategy.', 'Well played.', 'Let me think...', '🤔', 'Nice!', 'Hmm...', 'You\'re good!', 'Careful now...'];
         const reply = replies[Math.floor(Math.random() * replies.length)];
         setTimeout(() => {
           const botUsername = game.botColor === 'red' ? game.redPlayer.username : game.blackPlayer.username;
@@ -378,6 +490,15 @@ function setupSocket(io) {
   });
 }
 
+// ── ELO-based difficulty — higher ELO bots use elite AI ──────────────────────
+function getBotDifficultyFromElo(playerElo, botElo) {
+  const avg = (playerElo + botElo) / 2;
+  if (avg < 1050) return 'easy';
+  if (avg < 1400) return 'medium';
+  if (avg < 1700) return 'hard';
+  return 'elite';
+}
+
 function tryMatch(io) {
   if (matchQueue.length < 2) return false;
   for (let i = 0; i < matchQueue.length; i++) {
@@ -413,7 +534,6 @@ async function createGame(io, p1, p2) {
   await dbRun('INSERT INTO games (id, player_red_id, player_black_id, red_elo_before, black_elo_before) VALUES (?, ?, ?, ?, ?)',
     [gameId, redInfo.id, blackInfo.id, redInfo.elo, blackInfo.elo]);
 
-  // ── Timer — runs every 500ms so it never misses the 0 crossing ──────────────
   game.timerInterval = setInterval(async () => {
     if (game.status !== 'active') { clearInterval(game.timerInterval); game.timerInterval = null; return; }
     const times = game.getCurrentTimes();
@@ -438,8 +558,8 @@ async function createGame(io, p1, p2) {
 }
 
 async function createBotGame(io, playerData, botData, tcId, difficulty) {
-  const tc  = TIME_CONTROLS[tcId] || TIME_CONTROLS['blitz5'];
-  const flip = Math.random() < 0.5;
+  const tc   = TIME_CONTROLS[tcId] || TIME_CONTROLS['blitz5'];
+  const flip  = Math.random() < 0.5;
   const redPlayer   = flip ? playerData : botData;
   const blackPlayer = flip ? botData    : playerData;
   const botColor    = flip ? 'black'    : 'red';
@@ -454,7 +574,6 @@ async function createBotGame(io, playerData, botData, tcId, difficulty) {
   await dbRun('INSERT INTO games (id, player_red_id, player_black_id, red_elo_before, black_elo_before) VALUES (?, ?, ?, ?, ?)',
     [gameId, redPlayer.id, blackPlayer.id, redPlayer.elo, botData.elo]);
 
-  // ── Bot game timer — also 500ms ──────────────────────────────────────────────
   game.timerInterval = setInterval(async () => {
     if (game.status !== 'active') { clearInterval(game.timerInterval); game.timerInterval = null; return; }
     const times = game.getCurrentTimes();
@@ -475,7 +594,7 @@ async function createBotGame(io, playerData, botData, tcId, difficulty) {
 
   const playerSocket = userSockets.get(playerData.id);
   if (playerSocket) playerSocket.emit('game_started', game.toJSON(playerData.id));
-  console.log(`Bot game: ${playerData.username} (${playerData.elo}) vs ${botData.username} (${botData.elo}) [${difficulty}]`);
+  console.log(`Bot game: ${playerData.username} (${playerData.elo}) vs ${botData.username} [${difficulty}]`);
   if (botColor === 'red') scheduleBotMove(io, game);
 }
 
