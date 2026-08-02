@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import Board from '../components/Board';
 
 const EMPTY = 0, RED = 1, RED_KING = 2, BLACK = 3, BLACK_KING = 4;
 function isRed(p)      { return p === RED   || p === RED_KING;   }
@@ -147,107 +148,6 @@ function getBotMove(board,botColor,difficulty='medium') {
   return bestMoves[Math.floor(Math.random()*bestMoves.length)];
 }
 
-// ── Board ─────────────────────────────────────────────────────────────────────
-function GuestBoard({ board, selected, selectedMoves, allLegalMoves, onSquareClick, lastMove }) {
-  const squares = [];
-
-  for (let r = 0; r < 8; r++) {
-    for (let c = 0; c < 8; c++) {
-      const isDark  = (r + c) % 2 === 0;
-      const piece   = board[r][c];
-
-      const isSelected   = selected && selected[0] === r && selected[1] === c;
-      const isLegalSrc   = !selected && allLegalMoves.some(m => m.from[0] === r && m.from[1] === c);
-      const isLegalDest  = selected  && selectedMoves.some(m => m.to[0]   === r && m.to[1]   === c);
-      const isFrom       = lastMove  && lastMove.from[0] === r && lastMove.from[1] === c;
-      const isTo         = lastMove  && lastMove.to[0]   === r && lastMove.to[1]   === c;
-
-      let cls = `board-square ${isDark ? 'dark' : 'light'}`;
-      if (isSelected) cls += ' selected';
-      if (isFrom || isTo) cls += ' last-move';
-
-      squares.push(
-        <div
-          key={`${r}-${c}`}
-          className={cls}
-          onClick={() => isDark && onSquareClick(r, c)}
-          style={{ cursor: isDark ? 'pointer' : 'default' }}
-        >
-          {/* Coordinate labels */}
-          {isDark && r === 7 && <span className="coord-letter">{String.fromCharCode(97 + c)}</span>}
-          {isDark && c === 0 && <span className="coord-number">{8 - r}</span>}
-
-          {/* Legal move dot — destination */}
-          {isDark && isLegalDest && !piece && (
-            <div style={{
-              position: 'absolute', top: '50%', left: '50%',
-              transform: 'translate(-50%, -50%)',
-              width: '28%', height: '28%',
-              borderRadius: '50%',
-              background: 'rgba(129,182,76,0.7)',
-              pointerEvents: 'none',
-              zIndex: 2,
-            }} />
-          )}
-
-          {/* Legal move ring — destination with piece (capture) */}
-          {isDark && isLegalDest && piece && (
-            <div style={{
-              position: 'absolute', inset: '4%',
-              borderRadius: '50%',
-              border: '3px solid rgba(129,182,76,0.8)',
-              pointerEvents: 'none',
-              zIndex: 2,
-            }} />
-          )}
-
-          {/* Source piece highlight */}
-          {isDark && isLegalSrc && !isSelected && piece && (
-            <div style={{
-              position: 'absolute', inset: 0,
-              background: 'rgba(129,182,76,0.1)',
-              pointerEvents: 'none',
-              zIndex: 1,
-            }} />
-          )}
-
-          {/* Piece */}
-          {piece !== EMPTY && (
-            <div className="piece-wrapper" style={{ position: 'relative', zIndex: 3 }}>
-              <div
-                className={`piece ${ownerColor(piece)}-piece${isKing(piece) ? ' king' : ''}`}
-                style={{ cursor: ownerColor(piece) === 'red' ? 'pointer' : 'default' }}
-              >
-                <div className="piece-shine" />
-                <div className="piece-inner">
-                  {isKing(piece) && <span className="piece-crown">♛</span>}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      );
-    }
-  }
-
-  return (
-    <div className="board-outer">
-      <div
-        className="board-container"
-        style={{
-          width:  'min(520px, calc(100vw - 32px))',
-          height: 'min(520px, calc(100vw - 32px))',
-          touchAction: 'manipulation',
-        }}
-      >
-        <div className="board-grid" style={{ touchAction: 'manipulation' }}>
-          {squares}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── Signup prompt ─────────────────────────────────────────────────────────────
 function SignupPrompt({ show, result, moveCount, onSignup, onContinue }) {
   if (!show) return null;
@@ -283,16 +183,15 @@ function SignupPrompt({ show, result, moveCount, onSignup, onContinue }) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function GuestGamePage() {
-  const navigate     = useNavigate();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const difficulty   = searchParams.get('difficulty') || 'medium';
+  const difficulty = searchParams.get('difficulty') || 'medium';
 
   const playerColor = 'red';
   const botColor    = 'black';
 
   const [board,       setBoard]       = useState(() => createBoard());
   const [turn,        setTurn]        = useState('red');
-  const [selected,    setSelected]    = useState(null);   // [r,c] or null
   const [result,      setResult]      = useState(null);
   const [lastMove,    setLastMove]    = useState(null);
   const [moveCount,   setMoveCount]   = useState(0);
@@ -301,13 +200,7 @@ export default function GuestGamePage() {
 
   const diffLabel = difficulty === 'easy' ? '🟢 Easy' : difficulty === 'hard' ? '🔴 Hard' : '🟡 Medium';
 
-  // All legal moves for current player
-  const allLegalMoves = turn === playerColor && !result ? getLegalMoves(board, playerColor) : [];
-
-  // Legal moves for selected piece
-  const selectedMoves = selected
-    ? allLegalMoves.filter(m => m.from[0] === selected[0] && m.from[1] === selected[1])
-    : [];
+  const legalMoves = turn === playerColor && !result ? getLegalMoves(board, playerColor) : [];
 
   // Bot move
   useEffect(() => {
@@ -318,7 +211,7 @@ export default function GuestGamePage() {
       if (!move) { setResult('red_win'); setBotThinking(false); setTimeout(() => setShowPrompt(true), 600); return; }
       const newBoard = applyMove(board, move);
       setBoard(newBoard);
-      setLastMove(move);
+      setLastMove({ color: botColor, ...move });
       const res = getResult(newBoard, playerColor);
       if (res) { setResult(res); setTimeout(() => setShowPrompt(true), 600); }
       else setTurn(playerColor);
@@ -327,46 +220,27 @@ export default function GuestGamePage() {
     return () => clearTimeout(t);
   }, [turn, board, result, difficulty]);
 
-  function handleSquareClick(r, c) {
+  // Handle player move — matches the same signature as multiplayer
+  function handleMove(from, to) {
     if (turn !== playerColor || result || botThinking) return;
-    const piece = board[r][c];
+    const move = legalMoves.find(m =>
+      m.from[0] === from[0] && m.from[1] === from[1] &&
+      m.to[0]   === to[0]   && m.to[1]   === to[1]
+    );
+    if (!move) return;
 
-    // If a piece is already selected
-    if (selected) {
-      // Try to move to this square
-      const move = selectedMoves.find(m => m.to[0] === r && m.to[1] === c);
-      if (move) {
-        const newBoard = applyMove(board, move);
-        setBoard(newBoard);
-        setLastMove(move);
-        setSelected(null);
-        setMoveCount(prev => prev + 1);
-        const res = getResult(newBoard, botColor);
-        if (res) { setResult(res); setTimeout(() => setShowPrompt(true), 600); }
-        else setTurn(botColor);
-        return;
-      }
+    const newBoard = applyMove(board, move);
+    setBoard(newBoard);
+    setLastMove({ color: playerColor, ...move });
+    setMoveCount(prev => prev + 1);
 
-      // Clicked another own piece — switch selection
-      if (piece && ownerColor(piece) === playerColor) {
-        const newMoves = allLegalMoves.filter(m => m.from[0] === r && m.from[1] === c);
-        if (newMoves.length > 0) { setSelected([r, c]); return; }
-      }
-
-      // Clicked empty or enemy without valid move — deselect
-      setSelected(null);
-      return;
-    }
-
-    // Nothing selected — select a piece if it has legal moves
-    if (piece && ownerColor(piece) === playerColor) {
-      const movesForPiece = allLegalMoves.filter(m => m.from[0] === r && m.from[1] === c);
-      if (movesForPiece.length > 0) setSelected([r, c]);
-    }
+    const res = getResult(newBoard, botColor);
+    if (res) { setResult(res); setTimeout(() => setShowPrompt(true), 600); }
+    else setTurn(botColor);
   }
 
   function resetGame() {
-    setBoard(createBoard()); setTurn('red'); setSelected(null);
+    setBoard(createBoard()); setTurn('red');
     setResult(null); setLastMove(null); setMoveCount(0);
     setShowPrompt(false); setBotThinking(false);
   }
@@ -375,61 +249,65 @@ export default function GuestGamePage() {
   function handleContinue() { setShowPrompt(false); resetGame(); }
 
   return (
-    <div className="page" style={{ alignItems: 'center', padding: '16px' }}>
+    <div className="page game-page" style={{ alignItems: 'center', padding: 16 }}>
       <SignupPrompt show={showPrompt} result={result} moveCount={moveCount} onSignup={handleSignup} onContinue={handleContinue} />
 
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', maxWidth: 560, marginBottom: 8 }}>
-        <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>🎮 Guest · {diffLabel}</div>
-        <button className="btn btn-primary btn-sm" onClick={handleSignup} style={{ fontSize: 12 }}>🚀 Create Account</button>
-      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 560, gap: 8 }}>
 
-      {/* Bot bar */}
-      <div className="player-bar" style={{ width: '100%', maxWidth: 560, marginBottom: 4 }}>
-        <div className="player-bar-left">
-          <div className="player-bar-avatar" style={{ background: '#1a1a2e', fontSize: 18 }}>🤖</div>
-          <div className="player-bar-info">
-            <div className="player-bar-name"><span className="color-dot black" />Checkers Bot</div>
-            <div className="player-bar-rating">{botThinking ? '💭 thinking...' : diffLabel}</div>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>🎮 Guest · {diffLabel}</div>
+          <button className="btn btn-primary btn-sm" onClick={handleSignup} style={{ fontSize: 12 }}>🚀 Create Account</button>
+        </div>
+
+        {/* Bot bar */}
+        <div className="player-bar">
+          <div className="player-bar-left">
+            <div className="player-bar-avatar" style={{ background: '#1a1a2e', fontSize: 18 }}>🤖</div>
+            <div className="player-bar-info">
+              <div className="player-bar-name"><span className="color-dot black" />Checkers Bot</div>
+              <div className="player-bar-rating">{botThinking ? '💭 thinking...' : diffLabel}</div>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Board */}
-      <GuestBoard
-        board={board}
-        selected={selected}
-        selectedMoves={selectedMoves}
-        allLegalMoves={allLegalMoves}
-        onSquareClick={handleSquareClick}
-        lastMove={lastMove}
-      />
+        {/* Board — same component multiplayer uses */}
+        <Board
+          board={board}
+          myColor={playerColor}
+          turn={turn}
+          legalMoves={legalMoves}
+          onMove={handleMove}
+          gameOver={!!result}
+          lastMove={lastMove}
+        />
 
-      {/* Player bar */}
-      <div className="player-bar" style={{ width: '100%', maxWidth: 560, marginTop: 4 }}>
-        <div className="player-bar-left">
-          <div className="player-bar-avatar" style={{ background: 'var(--accent)', color: '#000', fontWeight: 900, fontSize: 14 }}>G</div>
-          <div className="player-bar-info">
-            <div className="player-bar-name"><span className="color-dot red" />You (Guest)</div>
-            <div className="player-bar-rating">Guest mode · stats not saved</div>
+        {/* Player bar */}
+        <div className="player-bar">
+          <div className="player-bar-left">
+            <div className="player-bar-avatar" style={{ background: 'var(--accent)', color: '#000', fontWeight: 900, fontSize: 14 }}>G</div>
+            <div className="player-bar-info">
+              <div className="player-bar-name"><span className="color-dot red" />You (Guest)</div>
+              <div className="player-bar-rating">Guest mode · stats not saved</div>
+            </div>
           </div>
+          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{moveCount} moves</div>
         </div>
-        <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{moveCount} moves</div>
-      </div>
 
-      {/* Sign up CTA */}
-      <div style={{
-        marginTop: 16, padding: '16px 24px',
-        background: 'rgba(129,182,76,0.08)', border: '1px solid rgba(129,182,76,0.2)',
-        borderRadius: 'var(--radius-lg)', textAlign: 'center', maxWidth: 560, width: '100%',
-      }}>
-        <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>Want to play real players?</div>
-        <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>
-          Sign up free to earn ELO, track stats, and compete on the leaderboard.
+        {/* Sign up banner */}
+        <div style={{
+          marginTop: 8, padding: '16px 24px',
+          background: 'rgba(129,182,76,0.08)', border: '1px solid rgba(129,182,76,0.2)',
+          borderRadius: 'var(--radius-lg)', textAlign: 'center',
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>Want to play real players?</div>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>
+            Sign up free to earn ELO, track stats, and compete on the leaderboard.
+          </div>
+          <button className="btn btn-primary" onClick={handleSignup} style={{ padding: '9px 24px', fontSize: 13 }}>
+            Sign Up Free →
+          </button>
         </div>
-        <button className="btn btn-primary" onClick={handleSignup} style={{ padding: '9px 24px', fontSize: 13 }}>
-          Sign Up Free →
-        </button>
       </div>
     </div>
   );

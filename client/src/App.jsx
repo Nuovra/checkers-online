@@ -34,21 +34,21 @@ function AppRoutes() {
     <>
       <Navbar />
       <Routes>
-        {/* Public */}
-        <Route path="/login"  element={<LoginPage />} />
-        <Route path="/play"   element={<GuestGamePage />} />
-        <Route path="/admin"  element={<AdminPage />} />
+        {/* Public / guest accessible */}
+        <Route path="/login"       element={<LoginPage />} />
+        <Route path="/play"        element={<GuestGamePage />} />
+        <Route path="/admin"       element={<AdminPage />} />
+        <Route path="/leaderboard" element={<ProtectedRoute><LeaderboardPage /></ProtectedRoute>} />
 
-        {/* Guests + logged in (lobby shows different UI per state) */}
+        {/* Lobby — guest + logged in */}
         <Route path="/" element={<ProtectedRoute><LobbyPage /></ProtectedRoute>} />
 
         {/* Logged in only */}
-        <Route path="/game"            element={<LoggedInOnly><GamePage /></LoggedInOnly>} />
-        <Route path="/game/bot"        element={<LoggedInOnly><BotGamePage /></LoggedInOnly>} />
-        <Route path="/review/:gameId"  element={<LoggedInOnly><GameReviewPage /></LoggedInOnly>} />
+        <Route path="/game"              element={<LoggedInOnly><GamePage /></LoggedInOnly>} />
+        <Route path="/game/bot"          element={<LoggedInOnly><BotGamePage /></LoggedInOnly>} />
+        <Route path="/review/:gameId"    element={<LoggedInOnly><GameReviewPage /></LoggedInOnly>} />
         <Route path="/profile/:username" element={<LoggedInOnly><ProfilePage /></LoggedInOnly>} />
-        <Route path="/leaderboard"     element={<LoggedInOnly><LeaderboardPage /></LoggedInOnly>} />
-        <Route path="/stats"           element={<LoggedInOnly><StatsPage /></LoggedInOnly>} />
+        <Route path="/stats"             element={<LoggedInOnly><StatsPage /></LoggedInOnly>} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
