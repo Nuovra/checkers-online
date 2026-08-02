@@ -11,12 +11,12 @@ export default function LoginPage() {
   const [error,    setError]    = useState('');
   const [loading,  setLoading]  = useState(false);
 
-  const { login, loginAsGuest, user } = useAuth();
+  const { login, loginAsGuest, user, isGuest } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (user && !user.isGuest) navigate('/');
-  }, [user]);
+    if (user && !isGuest) navigate('/');
+  }, [user, isGuest]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -41,7 +41,7 @@ export default function LoginPage() {
 
   function handleGuest() {
     loginAsGuest();
-    navigate('/play');
+    navigate('/');
   }
 
   return (
@@ -65,19 +65,19 @@ export default function LoginPage() {
           <p>The #1 free checkers game</p>
         </div>
 
-        {/* Guest play CTA */}
+        {/* Guest CTA */}
         <div style={{
           background: 'rgba(129,182,76,0.08)', border: '1px solid rgba(129,182,76,0.2)',
-          borderRadius: 'var(--radius-lg)', padding: '16px 20px', textAlign: 'center', marginBottom: 4,
+          borderRadius: 'var(--radius-lg)', padding: '16px 20px', textAlign: 'center',
         }}>
           <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>
             🎮 Try it first — no account needed
           </div>
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
-            Play a quick game against our AI bot instantly
+            Browse the game and play vs bot instantly
           </div>
           <button className="btn btn-primary" style={{ width: '100%', padding: '12px' }} onClick={handleGuest}>
-            ▶ Play as Guest
+            ▶ Continue as Guest
           </button>
         </div>
 
@@ -89,12 +89,8 @@ export default function LoginPage() {
 
         <div className="auth-card">
           <div className="auth-tabs">
-            <button className={`auth-tab${!isSignup?' active':''}`} onClick={() => { setIsSignup(false); setError(''); }}>
-              Log In
-            </button>
-            <button className={`auth-tab${isSignup?' active':''}`} onClick={() => { setIsSignup(true); setError(''); }}>
-              Sign Up
-            </button>
+            <button className={`auth-tab${!isSignup?' active':''}`} onClick={() => { setIsSignup(false); setError(''); }}>Log In</button>
+            <button className={`auth-tab${isSignup?' active':''}`}  onClick={() => { setIsSignup(true);  setError(''); }}>Sign Up</button>
           </div>
 
           <form onSubmit={handleSubmit} className="auth-form">
@@ -103,7 +99,6 @@ export default function LoginPage() {
               <input type="text" placeholder="Enter username" value={username}
                 onChange={e => setUsername(e.target.value)} required autoFocus />
             </div>
-
             {isSignup && (
               <div className="form-group">
                 <label>Email</label>
@@ -111,15 +106,12 @@ export default function LoginPage() {
                   onChange={e => setEmail(e.target.value)} required />
               </div>
             )}
-
             <div className="form-group">
               <label>Password</label>
               <input type="password" placeholder="Enter password" value={password}
                 onChange={e => setPassword(e.target.value)} required />
             </div>
-
             {error && <div className="auth-error">{error}</div>}
-
             <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '12px' }} disabled={loading}>
               {loading ? 'Please wait...' : isSignup ? 'Create Account' : 'Log In'}
             </button>

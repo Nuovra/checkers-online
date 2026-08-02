@@ -23,7 +23,7 @@ function LogoSVG({ size = 28 }) {
 }
 
 export default function Navbar() {
-  const { user, logout } = useAuth();
+  const { user, logout, isGuest } = useAuth();
   const { onlineCount } = useSocket();
   const navigate = useNavigate();
 
@@ -36,23 +36,49 @@ export default function Navbar() {
       <div className="navbar-links">
         {user ? (
           <>
-            <button className="navbar-link-btn" onClick={() => navigate('/leaderboard')}>🏆 Leaderboard</button>
-            <button className="navbar-link-btn" onClick={() => navigate('/stats')}>📊 Stats</button>
+            {/* Leaderboard — accessible to guests too (shows locked overlay) */}
+            <button className="navbar-link-btn" onClick={() => navigate('/leaderboard')}>
+              🏆 Leaderboard
+            </button>
+
+            {/* Stats — guests get redirected to signup */}
+            {!isGuest && (
+              <button className="navbar-link-btn" onClick={() => navigate('/stats')}>
+                📊 Stats
+              </button>
+            )}
+
+            {/* Online count — always visible */}
             <div className="online-pill">
               <span className="online-dot" />
-              <span>{onlineCount} online</span>
+              <span>{onlineCount.toLocaleString()} online</span>
             </div>
-            <div className="navbar-user-chip" onClick={() => navigate(`/profile/${user.username}`)}>
-              <div className="navbar-avatar-sm">
-                {user.avatar
-                  ? <img src={user.avatar} alt={user.username} />
-                  : user.username?.[0]?.toUpperCase()}
+
+            {isGuest ? (
+              /* Guest chip */
+              <div className="navbar-user-chip" onClick={() => navigate('/login?signup=1')}
+                style={{ cursor: 'pointer', borderColor: 'rgba(129,182,76,0.4)' }}>
+                <div className="navbar-avatar-sm" style={{ background: 'var(--accent)', color: '#000', fontWeight: 900, fontSize: 12 }}>G</div>
+                <span className="navbar-username">Guest</span>
+                <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 700, marginLeft: 2 }}>Sign Up</span>
               </div>
-              <span className="navbar-username">{user.username}</span>
-              {user.country && <FlagImg code={user.country} size={14} style={{ borderRadius: 2 }} />}
-              <span className="navbar-elo-badge">{user.elo}</span>
-            </div>
-            <button className="btn btn-ghost btn-sm" onClick={() => { logout(); navigate('/login'); }}>Log out</button>
+            ) : (
+              /* Logged in chip */
+              <div className="navbar-user-chip" onClick={() => navigate(`/profile/${user.username}`)}>
+                <div className="navbar-avatar-sm">
+                  {user.avatar ? <img src={user.avatar} alt={user.username} /> : user.username?.[0]?.toUpperCase()}
+                </div>
+                <span className="navbar-username">{user.username}</span>
+                {user.country && <FlagImg code={user.country} size={14} style={{ borderRadius: 2 }} />}
+                <span className="navbar-elo-badge">{user.elo}</span>
+              </div>
+            )}
+
+            <button className="btn btn-ghost btn-sm" onClick={() => {
+              if (isGuest) { navigate('/login'); } else { logout(); navigate('/login'); }
+            }}>
+              {isGuest ? 'Log In' : 'Log out'}
+            </button>
           </>
         ) : (
           <button className="btn btn-primary btn-sm" onClick={() => navigate('/login')}>Sign In</button>
