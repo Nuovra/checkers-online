@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage';
 import LobbyPage from './pages/LobbyPage';
 import GamePage from './pages/GamePage';
 import BotGamePage from './pages/BotGamePage';
+import GuestGamePage from './pages/GuestGamePage';
 import ProfilePage from './pages/ProfilePage';
 import LeaderboardPage from './pages/LeaderboardPage';
 import StatsPage from './pages/StatsPage';
@@ -19,23 +20,37 @@ function ProtectedRoute({ children }) {
   return children;
 }
 
+function LoggedInOnly({ children }) {
+  const { user, loading, isGuest } = useAuth();
+  if (loading) return <div className="page" style={{ justifyContent: 'center', alignItems: 'center' }}><div className="queue-spinner" /></div>;
+  if (!user || isGuest) return <Navigate to="/login?signup=1" replace />;
+  return children;
+}
+
 function AppRoutes() {
-  const { user, loading } = useAuth();
+  const { loading } = useAuth();
   if (loading) return <div className="page" style={{ justifyContent: 'center', alignItems: 'center' }}><div className="queue-spinner" /></div>;
   return (
     <>
       <Navbar />
       <Routes>
-        <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
+        {/* Public */}
+        <Route path="/login"  element={<LoginPage />} />
+        <Route path="/play"   element={<GuestGamePage />} />
+        <Route path="/admin"  element={<AdminPage />} />
+
+        {/* Guests + logged in (lobby shows different UI per state) */}
         <Route path="/" element={<ProtectedRoute><LobbyPage /></ProtectedRoute>} />
-        <Route path="/game" element={<ProtectedRoute><GamePage /></ProtectedRoute>} />
-        <Route path="/game/bot" element={<ProtectedRoute><BotGamePage /></ProtectedRoute>} />
-        <Route path="/review/:gameId" element={<ProtectedRoute><GameReviewPage /></ProtectedRoute>} />
-        <Route path="/profile/:username" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
-        <Route path="/leaderboard" element={<ProtectedRoute><LeaderboardPage /></ProtectedRoute>} />
-        <Route path="/stats" element={<ProtectedRoute><StatsPage /></ProtectedRoute>} />
+
+        {/* Logged in only */}
+        <Route path="/game"            element={<LoggedInOnly><GamePage /></LoggedInOnly>} />
+        <Route path="/game/bot"        element={<LoggedInOnly><BotGamePage /></LoggedInOnly>} />
+        <Route path="/review/:gameId"  element={<LoggedInOnly><GameReviewPage /></LoggedInOnly>} />
+        <Route path="/profile/:username" element={<LoggedInOnly><ProfilePage /></LoggedInOnly>} />
+        <Route path="/leaderboard"     element={<LoggedInOnly><LeaderboardPage /></LoggedInOnly>} />
+        <Route path="/stats"           element={<LoggedInOnly><StatsPage /></LoggedInOnly>} />
+
         <Route path="*" element={<Navigate to="/" replace />} />
-        <Route path="/admin" element={<AdminPage />} />
       </Routes>
     </>
   );
