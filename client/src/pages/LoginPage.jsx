@@ -1,86 +1,129 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
-function LogoSVG() {
-  return (
-    <svg width="88" height="88" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <radialGradient id="lg1" cx="40%" cy="30%" r="65%">
-          <stop offset="0%" stopColor="#5a5a5a"/>
-          <stop offset="50%" stopColor="#1a1a1a"/>
-          <stop offset="100%" stopColor="#080808"/>
-        </radialGradient>
-        <radialGradient id="lg2" cx="38%" cy="30%" r="65%">
-          <stop offset="0%" stopColor="#cc1a1a"/>
-          <stop offset="100%" stopColor="#6a0000"/>
-        </radialGradient>
-        <filter id="lgs">
-          <feDropShadow dx="0" dy="4" stdDeviation="5" floodOpacity="0.7"/>
-        </filter>
-      </defs>
-      <ellipse cx="50" cy="59" rx="43" ry="9" fill="rgba(0,0,0,0.3)"/>
-      <circle cx="50" cy="47" r="43" fill="url(#lg1)" filter="url(#lgs)"/>
-      <circle cx="50" cy="47" r="36" fill="none" stroke="rgba(170,170,170,0.65)" strokeWidth="3.5"/>
-      <circle cx="50" cy="47" r="31" fill="none" stroke="rgba(50,50,50,0.8)" strokeWidth="2"/>
-      <circle cx="50" cy="47" r="25" fill="none" stroke="#cc1a1a" strokeWidth="4.5"/>
-      <circle cx="50" cy="47" r="19" fill="url(#lg2)"/>
-      <ellipse cx="37" cy="33" rx="12" ry="8" fill="rgba(255,255,255,0.22)" transform="rotate(-20 37 33)"/>
-    </svg>
-  );
-}
-
 export default function LoginPage() {
-  const { login, register } = useAuth();
-  const [mode, setMode] = useState('login');
+  const [searchParams] = useSearchParams();
+  const [isSignup, setIsSignup] = useState(searchParams.get('signup') === '1');
   const [username, setUsername] = useState('');
-  const [email, setEmail] = useState('');
+  const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [error,    setError]    = useState('');
+  const [loading,  setLoading]  = useState(false);
+
+  const { login, loginAsGuest, user } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (user && !user.isGuest) navigate('/');
+  }, [user]);
 
   async function handleSubmit(e) {
-    e?.preventDefault();
+    e.preventDefault();
     setError(''); setLoading(true);
     try {
-      if (mode === 'login') await login(username, password);
-      else await register(username, email, password);
-    } catch (err) { setError(err.message); }
-    setLoading(false);
+      const endpoint = isSignup ? '/api/auth/register' : '/api/auth/login';
+      const body     = isSignup ? { username, email, password } : { username, password };
+      const res  = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.error) { setError(data.error); setLoading(false); return; }
+      login(data.token, data.user);
+      navigate('/');
+    } catch {
+      setError('Connection error. Please try again.');
+      setLoading(false);
+    }
+  }
+
+  function handleGuest() {
+    loginAsGuest();
+    navigate('/play');
   }
 
   return (
     <div className="page auth-page">
       <div className="auth-container">
         <div className="auth-logo">
-          <LogoSVG />
+          <div style={{
+            width: 64, height: 64, borderRadius: '50%', margin: '0 auto 16px',
+            background: 'linear-gradient(135deg, #1a1a1a, #2a2a2a)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: '0 0 32px rgba(129,182,76,0.3)',
+          }}>
+            <svg width="36" height="36" viewBox="0 0 100 100">
+              <circle cx="50" cy="50" r="43" fill="#111"/>
+              <circle cx="50" cy="50" r="35" fill="none" stroke="rgba(170,170,170,0.5)" strokeWidth="4"/>
+              <circle cx="50" cy="50" r="25" fill="none" stroke="#cc1a1a" strokeWidth="5"/>
+              <circle cx="50" cy="50" r="17" fill="#cc1a1a"/>
+            </svg>
+          </div>
           <h1>Checkers Online</h1>
-          <p>Play ranked checkers against real players</p>
+          <p>The #1 free checkers game</p>
+        </div>
+
+        {/* Guest play CTA */}
+        <div style={{
+          background: 'rgba(129,182,76,0.08)', border: '1px solid rgba(129,182,76,0.2)',
+          borderRadius: 'var(--radius-lg)', padding: '16px 20px', textAlign: 'center', marginBottom: 4,
+        }}>
+          <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>
+            🎮 Try it first — no account needed
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
+            Play a quick game against our AI bot instantly
+          </div>
+          <button className="btn btn-primary" style={{ width: '100%', padding: '12px' }} onClick={handleGuest}>
+            ▶ Play as Guest
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '4px 0' }}>
+          <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>or</span>
+          <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
         </div>
 
         <div className="auth-card">
           <div className="auth-tabs">
-            <button className={`auth-tab${mode === 'login' ? ' active' : ''}`} onClick={() => { setMode('login'); setError(''); }}>Log In</button>
-            <button className={`auth-tab${mode === 'register' ? ' active' : ''}`} onClick={() => { setMode('register'); setError(''); }}>Sign Up</button>
+            <button className={`auth-tab${!isSignup?' active':''}`} onClick={() => { setIsSignup(false); setError(''); }}>
+              Log In
+            </button>
+            <button className={`auth-tab${isSignup?' active':''}`} onClick={() => { setIsSignup(true); setError(''); }}>
+              Sign Up
+            </button>
           </div>
-          <div className="auth-divider" />
-          <div className="form-group">
-            <label>Username</label>
-            <input type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="Enter your username" autoFocus />
-          </div>
-          {mode === 'register' && (
+
+          <form onSubmit={handleSubmit} className="auth-form">
             <div className="form-group">
-              <label>Email</label>
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Enter your email" />
+              <label>Username</label>
+              <input type="text" placeholder="Enter username" value={username}
+                onChange={e => setUsername(e.target.value)} required autoFocus />
             </div>
-          )}
-          <div className="form-group">
-            <label>Password</label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter your password" onKeyDown={e => e.key === 'Enter' && handleSubmit(e)} />
-          </div>
-          {error && <p className="error-text">{error}</p>}
-          <button className="btn btn-primary" style={{ width: '100%', marginTop: 4, padding: '12px' }} onClick={handleSubmit} disabled={loading}>
-            {loading ? 'Loading...' : mode === 'login' ? 'Log In' : 'Create Account'}
-          </button>
+
+            {isSignup && (
+              <div className="form-group">
+                <label>Email</label>
+                <input type="email" placeholder="Enter email" value={email}
+                  onChange={e => setEmail(e.target.value)} required />
+              </div>
+            )}
+
+            <div className="form-group">
+              <label>Password</label>
+              <input type="password" placeholder="Enter password" value={password}
+                onChange={e => setPassword(e.target.value)} required />
+            </div>
+
+            {error && <div className="auth-error">{error}</div>}
+
+            <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '12px' }} disabled={loading}>
+              {loading ? 'Please wait...' : isSignup ? 'Create Account' : 'Log In'}
+            </button>
+          </form>
         </div>
       </div>
     </div>

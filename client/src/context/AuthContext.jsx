@@ -1,99 +1,100 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 
 const AuthContext = createContext(null);
-const API_BASE = '/api/auth';
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [token, setToken] = useState(() => localStorage.getItem('token'));
+  const [user,    setUser]    = useState(null);
+  const [token,   setToken]   = useState(null);
   const [loading, setLoading] = useState(true);
+  const [isGuest, setIsGuest] = useState(false);
 
   useEffect(() => {
-    if (token) fetchMe();
-    else setLoading(false);
-  }, [token]);
+    const savedToken = localStorage.getItem('token');
+    const savedUser  = localStorage.getItem('user');
+    const guestMode  = localStorage.getItem('guestMode');
 
-  async function fetchMe() {
-    try {
-      const res = await fetch(`${API_BASE}/me`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (data.user) {
-        const stored = localStorage.getItem(`avatar_${data.user.id}`);
-        setUser({ ...data.user, avatar: stored || null });
-      } else {
-        setToken(null);
-        localStorage.removeItem('token');
+    if (guestMode === 'true') {
+      setIsGuest(true);
+      setUser({ username: 'Guest', elo: 1200, isGuest: true });
+      setLoading(false);
+      return;
+    }
+
+    if (savedToken && savedUser) {
+      try {
+        const parsed = JSON.parse(savedUser);
+        setUser(parsed);
+        setToken(savedToken);
+        // Verify token is still valid
+        fetch('/api/auth/me', {
+          headers: { Authorization: `Bearer ${savedToken}` }
+        })
+          .then(r => r.json())
+          .then(data => {
+            if (data.user) {
+              setUser(data.user);
+              localStorage.setItem('user', JSON.stringify(data.user));
+            } else {
+              logout();
+            }
+          })
+          .catch(() => {})
+          .finally(() => setLoading(false));
+      } catch {
+        logout();
+        setLoading(false);
       }
-    } catch {
-      setToken(null);
-      localStorage.removeItem('token');
-    } finally {
+    } else {
       setLoading(false);
     }
+  }, []);
+
+  function login(newToken, newUser) {
+    setToken(newToken);
+    setUser(newUser);
+    setIsGuest(false);
+    localStorage.setItem('token', newToken);
+    localStorage.setItem('user', JSON.stringify(newUser));
+    localStorage.removeItem('guestMode');
   }
 
-  async function login(username, password) {
-    const res = await fetch(`${API_BASE}/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    localStorage.setItem('token', data.token);
-    setToken(data.token);
-    const stored = localStorage.getItem(`avatar_${data.user.id}`);
-    setUser({ ...data.user, avatar: stored || null });
-    return data;
-  }
-
-  async function register(username, email, password) {
-    const res = await fetch(`${API_BASE}/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, email, password })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    localStorage.setItem('token', data.token);
-    setToken(data.token);
-    setUser({ ...data.user, avatar: null });
-    return data;
+  function loginAsGuest() {
+    setIsGuest(true);
+    setUser({ username: 'Guest', elo: 1200, isGuest: true });
+    localStorage.setItem('guestMode', 'true');
   }
 
   function logout() {
-    localStorage.removeItem('token');
     setToken(null);
     setUser(null);
-  }
-
-  async function refreshUser() {
-    if (!token) return;
-    try {
-      const res = await fetch(`${API_BASE}/me`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (data.user) {
-        const stored = localStorage.getItem(`avatar_${data.user.id}`);
-        setUser(prev => ({ ...data.user, avatar: stored || prev?.avatar || null }));
-      }
-    } catch {}
+    setIsGuest(false);
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    localStorage.removeItem('guestMode');
   }
 
   function updateUser(updates) {
-    setUser(prev => prev ? { ...prev, ...updates } : null);
+    setUser(prev => {
+      if (!prev) return prev;
+      const updated = { ...prev, ...updates };
+      if (!isGuest) localStorage.setItem('user', JSON.stringify(updated));
+      return updated;
+    });
+  }
+
+  function refreshUser() {
+    if (!token || isGuest) return;
+    fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(data => { if (data.user) { setUser(data.user); localStorage.setItem('user', JSON.stringify(data.user)); } })
+      .catch(() => {});
   }
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, register, logout, refreshUser, updateUser }}>
+    <AuthContext.Provider value={{ user, token, loading, isGuest, login, loginAsGuest, logout, updateUser, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
-export function useAuth() {
-  return useContext(AuthContext);
-}
+export function useAuth() { return useContext(AuthContext); }
