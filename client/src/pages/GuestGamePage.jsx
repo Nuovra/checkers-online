@@ -148,7 +148,6 @@ function getBotMove(board,botColor,difficulty='medium') {
   return bestMoves[Math.floor(Math.random()*bestMoves.length)];
 }
 
-// ── Signup prompt ─────────────────────────────────────────────────────────────
 function SignupPrompt({ show, result, moveCount, onSignup, onContinue }) {
   if (!show) return null;
   const won = result === 'red_win';
@@ -181,7 +180,6 @@ function SignupPrompt({ show, result, moveCount, onSignup, onContinue }) {
   );
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
 export default function GuestGamePage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -202,7 +200,6 @@ export default function GuestGamePage() {
 
   const legalMoves = turn === playerColor && !result ? getLegalMoves(board, playerColor) : [];
 
-  // Bot move
   useEffect(() => {
     if (turn !== botColor || result) return;
     setBotThinking(true);
@@ -220,7 +217,6 @@ export default function GuestGamePage() {
     return () => clearTimeout(t);
   }, [turn, board, result, difficulty]);
 
-  // Handle player move — matches the same signature as multiplayer
   function handleMove(from, to) {
     if (turn !== playerColor || result || botThinking) return;
     const move = legalMoves.find(m =>
@@ -228,12 +224,10 @@ export default function GuestGamePage() {
       m.to[0]   === to[0]   && m.to[1]   === to[1]
     );
     if (!move) return;
-
     const newBoard = applyMove(board, move);
     setBoard(newBoard);
     setLastMove({ color: playerColor, ...move });
     setMoveCount(prev => prev + 1);
-
     const res = getResult(newBoard, botColor);
     if (res) { setResult(res); setTimeout(() => setShowPrompt(true), 600); }
     else setTurn(botColor);
@@ -249,63 +243,89 @@ export default function GuestGamePage() {
   function handleContinue() { setShowPrompt(false); resetGame(); }
 
   return (
-    <div className="page game-page" style={{ alignItems: 'center', padding: 16 }}>
+    <div className="page game-page">
       <SignupPrompt show={showPrompt} result={result} moveCount={moveCount} onSignup={handleSignup} onContinue={handleContinue} />
 
-      <div style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 560, gap: 8 }}>
+      <div className="game-layout">
 
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>🎮 Guest · {diffLabel}</div>
-          <button className="btn btn-primary btn-sm" onClick={handleSignup} style={{ fontSize: 12 }}>🚀 Create Account</button>
-        </div>
+        {/* Board column */}
+        <div className="game-board-col">
 
-        {/* Bot bar */}
-        <div className="player-bar">
-          <div className="player-bar-left">
-            <div className="player-bar-avatar" style={{ background: '#1a1a2e', fontSize: 18 }}>🤖</div>
-            <div className="player-bar-info">
-              <div className="player-bar-name"><span className="color-dot black" />Checkers Bot</div>
-              <div className="player-bar-rating">{botThinking ? '💭 thinking...' : diffLabel}</div>
+          {/* Bot player bar */}
+          <div className="player-bar">
+            <div className="player-bar-left">
+              <div className="player-bar-avatar" style={{ background: '#1a1a2e', fontSize: 18 }}>🤖</div>
+              <div className="player-bar-info">
+                <div className="player-bar-name">
+                  <span className="color-dot black" />
+                  Checkers Bot
+                </div>
+                <div className="player-bar-rating">{botThinking ? '💭 thinking...' : diffLabel}</div>
+              </div>
             </div>
           </div>
+
+          {/* Board */}
+          <Board
+            board={board}
+            myColor={playerColor}
+            turn={turn}
+            legalMoves={legalMoves}
+            onMove={handleMove}
+            gameOver={!!result}
+            lastMove={lastMove}
+          />
+
+          {/* Player bar */}
+          <div className={`player-bar${turn === playerColor && !result ? ' active' : ''}`}>
+            <div className="player-bar-left">
+              <div className="player-bar-avatar" style={{ background: 'var(--accent)', color: '#000', fontWeight: 900, fontSize: 14 }}>G</div>
+              <div className="player-bar-info">
+                <div className="player-bar-name">
+                  <span className="color-dot red" />
+                  You (Guest)
+                </div>
+                <div className="player-bar-rating">Guest mode · stats not saved</div>
+              </div>
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{moveCount} moves</div>
+          </div>
         </div>
 
-        {/* Board — same component multiplayer uses */}
-        <Board
-          board={board}
-          myColor={playerColor}
-          turn={turn}
-          legalMoves={legalMoves}
-          onMove={handleMove}
-          gameOver={!!result}
-          lastMove={lastMove}
-        />
-
-        {/* Player bar */}
-        <div className="player-bar">
-          <div className="player-bar-left">
-            <div className="player-bar-avatar" style={{ background: 'var(--accent)', color: '#000', fontWeight: 900, fontSize: 14 }}>G</div>
-            <div className="player-bar-info">
-              <div className="player-bar-name"><span className="color-dot red" />You (Guest)</div>
-              <div className="player-bar-rating">Guest mode · stats not saved</div>
+        {/* Sidebar — matches multiplayer layout */}
+        <div className="game-sidebar">
+          <div className="sidebar-section">
+            <div className="sidebar-header"><span className="sidebar-header-icon">🎮</span> Guest Mode</div>
+            <div className="sidebar-body" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                Difficulty: <strong style={{ color: 'var(--text-primary)' }}>{diffLabel}</strong>
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Stats not saved</div>
+              {!result && (
+                <button className="btn btn-ghost btn-sm" onClick={resetGame} style={{ marginTop: 4 }}>↺ New Game</button>
+              )}
             </div>
           </div>
-          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{moveCount} moves</div>
-        </div>
 
-        {/* Sign up banner */}
-        <div style={{
-          marginTop: 8, padding: '16px 24px',
-          background: 'rgba(129,182,76,0.08)', border: '1px solid rgba(129,182,76,0.2)',
-          borderRadius: 'var(--radius-lg)', textAlign: 'center',
-        }}>
-          <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>Want to play real players?</div>
-          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>
-            Sign up free to earn ELO, track stats, and compete on the leaderboard.
+          <div className="sidebar-section" style={{
+            background: 'rgba(129,182,76,0.08)',
+            border: '1px solid rgba(129,182,76,0.2)',
+          }}>
+            <div className="sidebar-header" style={{ color: 'var(--accent)' }}>
+              <span className="sidebar-header-icon">🚀</span> Sign Up Free
+            </div>
+            <div className="sidebar-body" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                Save your stats, earn ELO ratings, and challenge real players online.
+              </div>
+              <button className="btn btn-primary" onClick={handleSignup} style={{ width: '100%' }}>
+                Create Free Account →
+              </button>
+            </div>
           </div>
-          <button className="btn btn-primary" onClick={handleSignup} style={{ padding: '9px 24px', fontSize: 13 }}>
-            Sign Up Free →
+
+          <button className="btn btn-secondary" onClick={() => navigate('/')} style={{ width: '100%' }}>
+            ← Back to Home
           </button>
         </div>
       </div>
