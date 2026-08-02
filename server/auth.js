@@ -87,6 +87,15 @@ router.post('/set-country', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Server error' }); }
 });
 
+router.get('/online-count', (req, res) => {
+  try {
+    const { getFakeOnlineCount } = require('./botManager');
+    res.json({ count: getFakeOnlineCount(0) });
+  } catch (err) {
+    res.json({ count: 3100 });
+  }
+});
+
 router.get('/profile/:username', async (req, res) => {
   try {
     const user = await dbGet(
@@ -94,7 +103,6 @@ router.get('/profile/:username', async (req, res) => {
       [req.params.username]
     );
     if (!user) return res.status(404).json({ error: 'User not found' });
-
     const rawGames = await dbAll(
       `SELECT id, player_red_id, player_black_id, winner_id, result,
         red_elo_before, black_elo_before, red_elo_after, black_elo_after,
@@ -105,7 +113,6 @@ router.get('/profile/:username', async (req, res) => {
        ORDER BY completed_at DESC LIMIT 20`,
       [user.id, user.id]
     );
-
     const games = await Promise.all(rawGames.map(async g => {
       const ru = await dbGet('SELECT username, country FROM users WHERE id = ?', [g.player_red_id]);
       const bu = await dbGet('SELECT username, country FROM users WHERE id = ?', [g.player_black_id]);
@@ -117,7 +124,6 @@ router.get('/profile/:username', async (req, res) => {
         black_country:  bu?.country  || null,
       };
     }));
-
     res.json({ user, games });
   } catch (err) {
     console.error('Profile error:', err);
@@ -149,28 +155,19 @@ router.get('/game/:gameId', authMiddleware, async (req, res) => {
 
 router.get('/leaderboard', async (req, res) => {
   try {
-    // Real players top 50
     const realPlayers = await dbAll(
       `SELECT id, username, elo, wins, losses, draws, games_played, current_streak, best_streak, country
-       FROM users
-       WHERE email NOT LIKE '%@checkers.bot'
-       AND games_played > 0
+       FROM users WHERE email NOT LIKE '%@checkers.bot' AND games_played > 0
        ORDER BY elo DESC LIMIT 50`
     );
-
-    // Fill rest with bots to make leaderboard look active
     const botPlayers = await dbAll(
       `SELECT id, username, elo, wins, losses, draws, games_played, current_streak, best_streak, country
-       FROM users
-       WHERE email LIKE '%@checkers.bot'
+       FROM users WHERE email LIKE '%@checkers.bot'
        ORDER BY elo DESC LIMIT 150`
     );
-
-    // Merge, sort by ELO, return top 200
     const allPlayers = [...realPlayers, ...botPlayers]
       .sort((a, b) => b.elo - a.elo)
       .slice(0, 200);
-
     res.json({ players: allPlayers });
   } catch (err) { res.status(500).json({ error: 'Server error' }); }
 });
@@ -186,7 +183,6 @@ router.get('/admin/stats', adminMiddleware, async (req, res) => {
     const avgElo      = await dbGet("SELECT AVG(elo) as avg FROM users WHERE email NOT LIKE '%@checkers.bot'");
     const totalWins   = await dbGet("SELECT COUNT(*) as count FROM games WHERE result IN ('red_win','black_win')");
     const totalDraws  = await dbGet("SELECT COUNT(*) as count FROM games WHERE result = 'draw'");
-
     const recentGames = await dbAll(
       `SELECT g.id, g.result, g.moves_count, g.completed_at,
         u1.username as red_username, u2.username as black_username,
@@ -197,26 +193,21 @@ router.get('/admin/stats', adminMiddleware, async (req, res) => {
        WHERE g.result IS NOT NULL
        ORDER BY g.completed_at DESC LIMIT 10`, []
     );
-
     const recentUsers = await dbAll(
       `SELECT username, elo, wins, losses, draws, games_played, country, created_at
        FROM users WHERE email NOT LIKE '%@checkers.bot'
        ORDER BY created_at DESC LIMIT 10`, []
     );
-
     const gamesByDay = await dbAll(
       `SELECT DATE(completed_at) as day, COUNT(*) as count
        FROM games WHERE result IS NOT NULL AND completed_at > NOW() - INTERVAL '7 days'
        GROUP BY DATE(completed_at) ORDER BY day ASC`, []
     );
-
     const usersByDay = await dbAll(
       `SELECT DATE(created_at) as day, COUNT(*) as count
-       FROM users WHERE created_at > NOW() - INTERVAL '7 days'
-       AND email NOT LIKE '%@checkers.bot'
+       FROM users WHERE created_at > NOW() - INTERVAL '7 days' AND email NOT LIKE '%@checkers.bot'
        GROUP BY DATE(created_at) ORDER BY day ASC`, []
     );
-
     res.json({
       stats: {
         totalUsers:  totalUsers?.count  || 0,
