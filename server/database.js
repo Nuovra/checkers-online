@@ -1,8 +1,6 @@
 const { Pool } = require('pg');
 
 let pool = null;
-
-// Simple sync-like interface using a shared queue
 const queue = [];
 let running = false;
 
@@ -28,7 +26,6 @@ async function initDatabase() {
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
   });
-
   await pool.query('SELECT 1');
   console.log('PostgreSQL connected');
 
@@ -64,10 +61,24 @@ async function initDatabase() {
       black_elo_after INTEGER,
       moves_count INTEGER DEFAULT 0,
       moves_json TEXT,
+      is_rated BOOLEAN DEFAULT TRUE,
       started_at TIMESTAMPTZ DEFAULT NOW(),
       completed_at TIMESTAMPTZ
     )
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS friendships (
+      id TEXT PRIMARY KEY,
+      requester_id TEXT NOT NULL,
+      addressee_id TEXT NOT NULL,
+      status TEXT DEFAULT 'pending',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(requester_id, addressee_id)
+    )
+  `);
+
+  try { await pool.query(`ALTER TABLE games ADD COLUMN IF NOT EXISTS is_rated BOOLEAN DEFAULT TRUE`); } catch {}
 
   console.log('Database initialized');
 }

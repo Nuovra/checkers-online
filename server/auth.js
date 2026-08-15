@@ -91,9 +91,7 @@ router.get('/online-count', (req, res) => {
   try {
     const { getFakeOnlineCount } = require('./botManager');
     res.json({ count: getFakeOnlineCount(0) });
-  } catch (err) {
-    res.json({ count: 3100 });
-  }
+  } catch (err) { res.json({ count: 3100 }); }
 });
 
 router.get('/profile/:username', async (req, res) => {
@@ -106,7 +104,7 @@ router.get('/profile/:username', async (req, res) => {
     const rawGames = await dbAll(
       `SELECT id, player_red_id, player_black_id, winner_id, result,
         red_elo_before, black_elo_before, red_elo_after, black_elo_after,
-        moves_count, completed_at
+        moves_count, completed_at, is_rated
        FROM games
        WHERE (player_red_id = ? OR player_black_id = ?)
          AND result IS NOT NULL AND completed_at IS NOT NULL
@@ -116,13 +114,7 @@ router.get('/profile/:username', async (req, res) => {
     const games = await Promise.all(rawGames.map(async g => {
       const ru = await dbGet('SELECT username, country FROM users WHERE id = ?', [g.player_red_id]);
       const bu = await dbGet('SELECT username, country FROM users WHERE id = ?', [g.player_black_id]);
-      return {
-        ...g,
-        red_username:   ru?.username || 'Unknown',
-        black_username: bu?.username || 'Unknown',
-        red_country:    ru?.country  || null,
-        black_country:  bu?.country  || null,
-      };
+      return { ...g, red_username: ru?.username || 'Unknown', black_username: bu?.username || 'Unknown', red_country: ru?.country || null, black_country: bu?.country || null };
     }));
     res.json({ user, games });
   } catch (err) {
@@ -136,16 +128,16 @@ router.get('/game/:gameId', authMiddleware, async (req, res) => {
     const game = await dbGet(
       `SELECT id, player_red_id, player_black_id, winner_id, result,
         red_elo_before, black_elo_before, red_elo_after, black_elo_after,
-        moves_count, moves_json, completed_at FROM games WHERE id = ?`,
+        moves_count, moves_json, completed_at, is_rated FROM games WHERE id = ?`,
       [req.params.gameId]
     );
     if (!game) return res.status(404).json({ error: 'Game not found' });
     const ru = await dbGet('SELECT username, country FROM users WHERE id = ?', [game.player_red_id]);
     const bu = await dbGet('SELECT username, country FROM users WHERE id = ?', [game.player_black_id]);
-    game.red_username   = ru?.username || 'Unknown';
+    game.red_username = ru?.username || 'Unknown';
     game.black_username = bu?.username || 'Unknown';
-    game.red_country    = ru?.country  || null;
-    game.black_country  = bu?.country  || null;
+    game.red_country = ru?.country || null;
+    game.black_country = bu?.country || null;
     let movesData = null;
     if (game.moves_json) { try { movesData = JSON.parse(game.moves_json); } catch {} }
     const { moves_json, ...gameClean } = game;
@@ -165,10 +157,103 @@ router.get('/leaderboard', async (req, res) => {
        FROM users WHERE email LIKE '%@checkers.bot'
        ORDER BY elo DESC LIMIT 150`
     );
-    const allPlayers = [...realPlayers, ...botPlayers]
-      .sort((a, b) => b.elo - a.elo)
-      .slice(0, 200);
+    const allPlayers = [...realPlayers, ...botPlayers].sort((a, b) => b.elo - a.elo).slice(0, 200);
     res.json({ players: allPlayers });
+  } catch (err) { res.status(500).json({ error: 'Server error' }); }
+});
+
+// ── Friends ───────────────────────────────────────────────────────────────────
+router.get('/friends', authMiddleware, async (req, res) => {
+  try {
+    const rows = await dbAll(
+      `SELECT f.id as friendship_id, u.id, u.username, u.elo, u.country, u.last_seen
+       FROM friendships f
+       JOIN users u ON u.id = CASE WHEN f.requester_id = ? THEN f.addressee_id ELSE f.requester_id END
+       WHERE (f.requester_id = ? OR f.addressee_id = ?) AND f.status = 'accepted'
+       ORDER BY u.username ASC`,
+      [req.userId, req.userId, req.userId]
+    );
+    res.json({ friends: rows });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }
+});
+
+router.get('/friends/requests', authMiddleware, async (req, res) => {
+  try {
+    const incoming = await dbAll(
+      `SELECT f.id as friendship_id, u.id, u.username, u.elo, u.country, f.created_at
+       FROM friendships f JOIN users u ON f.requester_id = u.id
+       WHERE f.addressee_id = ? AND f.status = 'pending' ORDER BY f.created_at DESC`,
+      [req.userId]
+    );
+    const outgoing = await dbAll(
+      `SELECT f.id as friendship_id, u.id, u.username, u.elo, u.country, f.created_at
+       FROM friendships f JOIN users u ON f.addressee_id = u.id
+       WHERE f.requester_id = ? AND f.status = 'pending' ORDER BY f.created_at DESC`,
+      [req.userId]
+    );
+    res.json({ incoming, outgoing });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }
+});
+
+router.post('/friends/request', authMiddleware, async (req, res) => {
+  try {
+    const { username } = req.body;
+    if (!username) return res.status(400).json({ error: 'Username required' });
+    const target = await dbGet('SELECT id, username, email FROM users WHERE LOWER(username) = LOWER(?)', [username]);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+    if (target.id === req.userId) return res.status(400).json({ error: "You can't add yourself" });
+    if (target.email && target.email.endsWith('@checkers.bot')) return res.status(400).json({ error: 'Cannot add this user' });
+    const existing = await dbGet(
+      `SELECT id, status FROM friendships WHERE (requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?)`,
+      [req.userId, target.id, target.id, req.userId]
+    );
+    if (existing) {
+      if (existing.status === 'accepted') return res.status(400).json({ error: 'Already friends' });
+      return res.status(400).json({ error: 'Request already pending' });
+    }
+    const id = uuidv4();
+    await dbRun('INSERT INTO friendships (id, requester_id, addressee_id, status) VALUES (?, ?, ?, ?)', [id, req.userId, target.id, 'pending']);
+    res.json({ success: true, target: { id: target.id, username: target.username } });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }
+});
+
+router.post('/friends/accept', authMiddleware, async (req, res) => {
+  try {
+    const { friendshipId } = req.body;
+    const f = await dbGet('SELECT * FROM friendships WHERE id = ? AND addressee_id = ? AND status = ?', [friendshipId, req.userId, 'pending']);
+    if (!f) return res.status(404).json({ error: 'Request not found' });
+    await dbRun('UPDATE friendships SET status = ? WHERE id = ?', ['accepted', friendshipId]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: 'Server error' }); }
+});
+
+router.post('/friends/decline', authMiddleware, async (req, res) => {
+  try {
+    const { friendshipId } = req.body;
+    await dbRun('DELETE FROM friendships WHERE id = ? AND (addressee_id = ? OR requester_id = ?)', [friendshipId, req.userId, req.userId]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: 'Server error' }); }
+});
+
+router.post('/friends/remove', authMiddleware, async (req, res) => {
+  try {
+    const { friendshipId } = req.body;
+    await dbRun('DELETE FROM friendships WHERE id = ? AND (requester_id = ? OR addressee_id = ?)', [friendshipId, req.userId, req.userId]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: 'Server error' }); }
+});
+
+router.get('/search-users', authMiddleware, async (req, res) => {
+  try {
+    const q = (req.query.q || '').trim();
+    if (q.length < 2) return res.json({ users: [] });
+    const users = await dbAll(
+      `SELECT id, username, elo, country FROM users
+       WHERE LOWER(username) LIKE LOWER(?) AND id != ? AND email NOT LIKE '%@checkers.bot'
+       ORDER BY username ASC LIMIT 10`,
+      [`%${q}%`, req.userId]
+    );
+    res.json({ users });
   } catch (err) { res.status(500).json({ error: 'Server error' }); }
 });
 
@@ -187,45 +272,33 @@ router.get('/admin/stats', adminMiddleware, async (req, res) => {
       `SELECT g.id, g.result, g.moves_count, g.completed_at,
         u1.username as red_username, u2.username as black_username,
         g.red_elo_before, g.black_elo_before, g.red_elo_after, g.black_elo_after
-       FROM games g
-       JOIN users u1 ON g.player_red_id = u1.id
-       JOIN users u2 ON g.player_black_id = u2.id
-       WHERE g.result IS NOT NULL
-       ORDER BY g.completed_at DESC LIMIT 10`, []
+       FROM games g JOIN users u1 ON g.player_red_id = u1.id JOIN users u2 ON g.player_black_id = u2.id
+       WHERE g.result IS NOT NULL ORDER BY g.completed_at DESC LIMIT 10`, []
     );
     const recentUsers = await dbAll(
       `SELECT username, elo, wins, losses, draws, games_played, country, created_at
-       FROM users WHERE email NOT LIKE '%@checkers.bot'
-       ORDER BY created_at DESC LIMIT 10`, []
+       FROM users WHERE email NOT LIKE '%@checkers.bot' ORDER BY created_at DESC LIMIT 10`, []
     );
     const gamesByDay = await dbAll(
-      `SELECT DATE(completed_at) as day, COUNT(*) as count
-       FROM games WHERE result IS NOT NULL AND completed_at > NOW() - INTERVAL '7 days'
+      `SELECT DATE(completed_at) as day, COUNT(*) as count FROM games
+       WHERE result IS NOT NULL AND completed_at > NOW() - INTERVAL '7 days'
        GROUP BY DATE(completed_at) ORDER BY day ASC`, []
     );
     const usersByDay = await dbAll(
-      `SELECT DATE(created_at) as day, COUNT(*) as count
-       FROM users WHERE created_at > NOW() - INTERVAL '7 days' AND email NOT LIKE '%@checkers.bot'
+      `SELECT DATE(created_at) as day, COUNT(*) as count FROM users
+       WHERE created_at > NOW() - INTERVAL '7 days' AND email NOT LIKE '%@checkers.bot'
        GROUP BY DATE(created_at) ORDER BY day ASC`, []
     );
     res.json({
       stats: {
-        totalUsers:  totalUsers?.count  || 0,
-        totalGames:  totalGames?.count  || 0,
-        todayUsers:  todayUsers?.count  || 0,
-        todayGames:  todayGames?.count  || 0,
-        activeUsers: activeUsers?.count || 0,
-        avgElo:      Math.round(avgElo?.avg || 1200),
-        totalWins:   totalWins?.count   || 0,
-        totalDraws:  totalDraws?.count  || 0,
-        topPlayer,
+        totalUsers: totalUsers?.count || 0, totalGames: totalGames?.count || 0,
+        todayUsers: todayUsers?.count || 0, todayGames: todayGames?.count || 0,
+        activeUsers: activeUsers?.count || 0, avgElo: Math.round(avgElo?.avg || 1200),
+        totalWins: totalWins?.count || 0, totalDraws: totalDraws?.count || 0, topPlayer,
       },
       recentGames, recentUsers, gamesByDay, usersByDay,
     });
-  } catch (err) {
-    console.error('Admin stats error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (err) { console.error('Admin stats error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
 router.get('/debug/games/:username', async (req, res) => {
