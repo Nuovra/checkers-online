@@ -1,11 +1,13 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 
 const SocketContext = createContext(null);
 
 export function SocketProvider({ children }) {
   const { token, isGuest } = useAuth();
+  const navigate = useNavigate();
   const [socket,          setSocket]          = useState(null);
   const [connected,       setConnected]       = useState(false);
   const [onlineCount,     setOnlineCount]     = useState(3100);
@@ -24,9 +26,7 @@ export function SocketProvider({ children }) {
 
   useEffect(() => {
     if (!isGuest) return;
-    function fetchCount() {
-      fetch('/api/auth/online-count').then(r => r.json()).then(d => { if (d.count) setOnlineCount(d.count); }).catch(() => {});
-    }
+    function fetchCount() { fetch('/api/auth/online-count').then(r => r.json()).then(d => { if (d.count) setOnlineCount(d.count); }).catch(() => {}); }
     fetchCount();
     const i = setInterval(fetchCount, 30000);
     return () => clearInterval(i);
@@ -47,10 +47,16 @@ export function SocketProvider({ children }) {
     });
     s.on('challenge_received', (data) => setChallenge(data));
 
+    // GLOBAL — any game start (matchmaking OR friend challenge) navigates both players
+    s.on('game_started', (gameData) => {
+      setChallenge(null);
+      navigate('/game', { state: { gameData } });
+    });
+
     socketRef.current = s;
     setSocket(s);
     return () => { s.disconnect(); socketRef.current = null; setSocket(null); setConnected(false); };
-  }, [token, isGuest, refreshPending]);
+  }, [token, isGuest, refreshPending, navigate]);
 
   useEffect(() => {
     if (!token || isGuest) return;
