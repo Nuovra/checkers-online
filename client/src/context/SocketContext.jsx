@@ -8,6 +8,9 @@ const SocketContext = createContext(null);
 export function SocketProvider({ children }) {
   const { token, isGuest } = useAuth();
   const navigate = useNavigate();
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+
   const [socket,          setSocket]          = useState(null);
   const [connected,       setConnected]       = useState(false);
   const [onlineCount,     setOnlineCount]     = useState(3100);
@@ -24,6 +27,7 @@ export function SocketProvider({ children }) {
     } catch {}
   }, [token, isGuest]);
 
+  // Guests — poll online count via REST
   useEffect(() => {
     if (!isGuest) return;
     function fetchCount() { fetch('/api/auth/online-count').then(r => r.json()).then(d => { if (d.count) setOnlineCount(d.count); }).catch(() => {}); }
@@ -32,13 +36,21 @@ export function SocketProvider({ children }) {
     return () => clearInterval(i);
   }, [isGuest]);
 
+  // Logged in — persistent socket. ONLY depends on token/isGuest so it never
+  // reconnects on navigation.
   useEffect(() => {
     if (!token || isGuest) return;
     if (socketRef.current) { socketRef.current.disconnect(); socketRef.current = null; }
 
-    const s = io('/', { auth: { token }, transports: ['websocket', 'polling'], reconnection: true, reconnectionDelay: 1000, reconnectionAttempts: 5 });
+    const s = io('/', {
+      auth: { token },
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionAttempts: 10,
+    });
 
-    s.on('connect', () => { setConnected(true); s.emit('get_online_friends'); refreshPending(); });
+    s.on('connect', () => { setConnected(true); s.emit('get_online_friends'); });
     s.on('disconnect', () => setConnected(false));
     s.on('online_count', (c) => setOnlineCount(c));
     s.on('online_friends', ({ onlineIds }) => setOnlineFriendIds(new Set(onlineIds)));
@@ -47,19 +59,27 @@ export function SocketProvider({ children }) {
     });
     s.on('challenge_received', (data) => setChallenge(data));
 
-    // GLOBAL — any game start (matchmaking OR friend challenge) navigates both players
+    // Global navigation into games — uses ref so this handler never goes stale
     s.on('game_started', (gameData) => {
       setChallenge(null);
-      navigate('/game', { state: { gameData } });
+      navigateRef.current('/game', { state: { gameData } });
     });
 
     socketRef.current = s;
     setSocket(s);
-    return () => { s.disconnect(); socketRef.current = null; setSocket(null); setConnected(false); };
-  }, [token, isGuest, refreshPending, navigate]);
 
+    return () => {
+      s.disconnect();
+      socketRef.current = null;
+      setSocket(null);
+      setConnected(false);
+    };
+  }, [token, isGuest]);
+
+  // Pending friend requests polling
   useEffect(() => {
     if (!token || isGuest) return;
+    refreshPending();
     const i = setInterval(refreshPending, 30000);
     return () => clearInterval(i);
   }, [token, isGuest, refreshPending]);
